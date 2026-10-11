@@ -36,15 +36,26 @@ Space Bench is a free, local-first circuit workbench, developed on macOS (it is 
 - **Gerber X2 + Excellon** export, validated with gerbonara.
 
 ### All in one: circuit + firmware
-- Place an **Arduino Uno, Nano or Raspberry Pi Pico** in a schematic (the KiCad `MCU_Module` symbols), write its sketch in the **Firmware** panel next to the drawing, and press **Run** (or Simulate): the real firmware runs on the emulator while **ngspice** simulates the whole circuit around it.
-- They advance together in 20 ms frames. Every edge a pin makes becomes a source on that pin (25 Ω output, pull-ups, input ↔ output changes), ngspice simulates the frame from where the last one ended, and the voltages on the inputs and ADC pins are what the sketch reads next.
-- The scope, meters, wire colours and LED glow show the result live; the Serial Monitor talks to the sketch. Example: **Examples → Microcontrollers → Arduino PWM DAC**.
-- Inputs lag outputs by one frame, and inductor currents restart at frame boundaries. ESP32 boards aren't supported in a schematic yet.
+- Place a board in a schematic — an Arduino, a Raspberry Pi, an STM32 or an ATtiny85 — write its program in the **Firmware** panel next to the drawing, and press **Run** (or Simulate): the real firmware (or Linux program) runs on its emulator while **ngspice** simulates the whole circuit around it.
+- They advance together in lockstep frames (20–50 ms). Every edge a pin makes becomes a source on that pin (25 Ω output, pull-ups, input ↔ output changes), ngspice simulates the frame from where the last one ended, and the voltages on the inputs and ADC pins are what the program reads next.
+- The scope, meters, wire colours and LED glow show the result live; the Serial Monitor (or, on a Pi, the program's output and a Terminal) talks to the board. Examples: **Examples → Microcontrollers → Arduino PWM DAC** and **Raspberry Pi LED + button**.
+- Inputs lag outputs by one frame, and inductor currents restart at frame boundaries.
 
-### Microcontrollers
-- A Wokwi-style workspace: write the sketch in Monaco, wire boards and parts on a canvas, compile with your `arduino-cli`, and run the real firmware in real time.
-- **Arduino Uno / Nano / Mega** (avr8js), **Raspberry Pi Pico** (rp2040js, with USB serial and PIO) and **ESP32** (Espressif's QEMU with a GPIO bridge).
-- A catalogue of **472 parts** (354 simulated): sensors, displays, motors, I²C chips, logic, passives and more. Breadboards, a Serial Monitor, a logic analyser with VCD export, Fritzing part import, several boards per sketch, and a "Check with ngspice" that simulates the running circuit.
+### Microcontrollers and boards
+- A Wokwi-style workspace: write the sketch in Monaco, wire boards and parts on a canvas, compile with your `arduino-cli`, and run the real firmware.
+- A catalogue of **472 parts** (sensors, displays, motors, I²C chips, logic, passives …), breadboards, a Serial Monitor, a logic analyser with VCD export, Fritzing part import, several boards per sketch, and a "Check with ngspice" that simulates the running circuit.
+
+| Board | Runs on | Canvas | Schematic |
+|---|---|---|---|
+| Arduino Uno, Nano, Mega 2560 (+ compatibles) | avr8js | ✓ | Uno, Nano |
+| ATtiny85 (ATTinyCore) | avr8js | ✓ | ✓ (bare chip) |
+| Raspberry Pi Pico | rp2040js (USB serial, PIO) | ✓ | ✓ |
+| ESP32 DevKit, ESP32-S3 DevKitC-1, ESP32-C3 DevKitM-1 | Espressif's QEMU + a GPIO bridge | ✓ | — |
+| STM32F4 Discovery, STM32 Blue Pill | Renode (real stm32duino ELF) | ✓ | ✓ (bare STM32F407 / F103C8) |
+| Arduino Nano 33 BLE (nRF52840) | Renode | ✓ | — |
+| **Raspberry Pi 5, 4B, 3B+, Zero 2 W** | **Linux in a VM** (QEMU + the host hypervisor): Debian 13 + Raspberry Pi's gpiozero / lgpio / RPi.GPIO, GPIO through the circuit | ✓ | ✓ (40-pin header) |
+
+The Raspberry Pis run real Linux and Python: no emulator models the Pi 5's hardware, so Space Bench boots an arm64 VM that identifies itself as the Pi you placed and routes its GPIO pins (a simulated GPIO controller) through the circuit. Set them up once in **Settings → Microcontrollers → Linux Boards** (≈ 1 GB, a few minutes); afterwards a Pi boots in about 3 seconds.
 
 ### AI assistant (optional)
 - Describe a circuit or paste a picture of a schematic: Claude writes the Kirk program, simulates it, reads the numbers and fixes what is off. In the microcontroller workspace it writes the sketch and the wiring.
@@ -61,7 +72,9 @@ Space Bench is a free, local-first circuit workbench, developed on macOS (it is 
 | Rust (stable, 1.90+) | the desktop shell | [rustup.rs](https://rustup.rs) — then `source ~/.cargo/env` |
 | ngspice | circuit simulation | `brew install ngspice` |
 | arduino-cli *(optional)* | compiling sketches | `brew install arduino-cli` |
-| Espressif QEMU *(optional)* | running ESP32 sketches | Settings → Microcontrollers → Install |
+| Espressif QEMU *(optional)* | ESP32 / S3 / C3 boards | Settings → Microcontrollers → Install |
+| QEMU *(optional)* | Raspberry Pi boards (Linux) | `brew install qemu`, then Settings → Linux Boards → Set up |
+| Renode *(optional)* | STM32 / nRF52 boards | Settings → Microcontrollers → Install |
 
 The app looks for ngspice in `PATH`, `/opt/homebrew/bin` and `/usr/local/bin`; set `SPICEBENCH_NGSPICE` to use another one. Board cores (AVR, RP2040, ESP32) are installed from the Microcontrollers page.
 
@@ -102,7 +115,11 @@ apps/desktop/                 the Tauri 2 app
     pcb/                      footprints, placement, router, DRC, Gerber export, 3D models
     mcu/                      microcontroller workspace: emulators, circuit solver, parts catalogue
     cosim/                    circuit + firmware co-simulation: boards in schematics, the lockstep loop
-  src-tauri/                  Rust shell: ngspice (program + libngspice), arduino-cli, QEMU, Claude Code
+    linux/                    Raspberry Pi boards: the VM, its agent, the one-time setup
+    renode/                   STM32 / nRF52 boards on Renode
+  linux-guest/                files installed in the Pi VM (agent, GPIO set-up, identity, provisioning)
+  renode/                     the helper Space Bench loads into Renode
+  src-tauri/                  Rust shell: ngspice (program + libngspice), arduino-cli, QEMU (ESP32, Linux VM), Renode, Claude Code
   public/kicad/               KiCad symbols, converted (generated by scripts/build-kicad-symbols.mjs)
 engine/                       sb-engine — our own simulator in Rust (MNA, Newton, transient, AC); for later
 scripts/                      build-kicad-symbols.mjs
@@ -139,6 +156,10 @@ Third-party parts keep their own licences:
 | RP2040 B1 boot ROM | BSD-3-Clause (Raspberry Pi) | booting Pico firmware |
 | [Monaco Editor](https://github.com/microsoft/monaco-editor) | MIT | sketch editor |
 | [arduino-cli](https://github.com/arduino/arduino-cli) | GPL-3.0, run as a separate program | compiling sketches |
-| [Espressif QEMU](https://github.com/espressif/qemu) | GPL-2.0, run as a separate program | ESP32 emulation |
+| [Espressif QEMU](https://github.com/espressif/qemu) | GPL-2.0, run as a separate program | ESP32 / S3 / C3 emulation |
+| [QEMU](https://www.qemu.org) | GPL-2.0, run as a separate program | the Raspberry Pi VM |
+| [Renode](https://github.com/renode/renode) | MIT, run as a separate program | STM32 / nRF52 emulation |
+| Debian, Raspberry Pi archive packages | their own (mostly free) licences, downloaded on request | the Raspberry Pi system |
+| Linux `gpio-sim` / `irq_sim` | GPL-2.0, built inside the VM from kernel.org sources | the simulated GPIO controller |
 | [Tauri](https://tauri.app), [React](https://react.dev), [shadcn/ui](https://ui.shadcn.com), [uPlot](https://github.com/leeoniya/uPlot), [three.js](https://threejs.org) | MIT / Apache-2.0 | the app |
 | Fritzing part fixture (US-100) | CC-BY-SA 3.0 | an import test |

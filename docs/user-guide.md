@@ -205,6 +205,31 @@ Outputs are exact to the edge; inputs see the circuit one frame late. Without a 
 Try **Examples → Microcontrollers → Arduino PWM DAC**: the Uno sweeps PWM through an RC filter
 and reads the voltage back on A0.
 
+## More boards: Raspberry Pi (Linux), STM32, nRF52, ATtiny85, ESP32-S3 / C3
+
+**Raspberry Pi 5, 4B, 3B+, Zero 2 W** run real Linux and Python.
+1. Install QEMU (`brew install qemu`), then **Settings → Microcontrollers → Linux Boards → Set up**:
+   it downloads Debian 13 for arm64 and prepares it as a Raspberry Pi (Raspberry Pi's gpiozero,
+   lgpio and RPi.GPIO, a simulated GPIO controller). About 1 GB and a few minutes, once.
+2. Place a Pi: in a schematic, KiCad's **Connector → Raspberry_Pi_4** (a Pi 4B; put "Pi 5" in its
+   Value for a Pi 5) or **Raspberry_Pi_2_3** (a Pi 3B+; "Zero 2" for a Zero 2 W); in the
+   Microcontrollers canvas, the boards under **Raspberry Pi**.
+3. Write `main.py` (gpiozero, RPi.GPIO, lgpio … as on a real Pi) and press **Run**. The Pi boots in
+   about 3 s; GPIO0–27 on the 40-pin header are the circuit's. `print` goes to the **Program**
+   tab; the **Terminal** is the Pi's console (logged in as `pi`) — `pip install …`, files, anything
+   Linux. Packages you install stay installed.
+
+The Pi isn't cycle-exact: Linux schedules its programs, so timing is real-time-ish (a `sleep(0.1)`
+toggles every ~100 ms). Not yet: I²C / SPI / UART devices on the header, hardware PWM, the desktop.
+
+**STM32F4 Discovery, STM32 Blue Pill, Arduino Nano 33 BLE** run their real firmware on Renode
+(Settings → Microcontrollers → Install). Install the board's Arduino core from the
+Microcontrollers page (STMicroelectronics:stm32, arduino:mbed_nano). In schematics, the bare
+**STM32F407V…** and **STM32F103C8** symbols run as these boards. On the Nano 33 BLE use `Serial1`.
+
+**ATtiny85** runs on avr8js (install ATTinyCore from the Microcontrollers page); its `Serial` is
+software TX on PB0. **ESP32-S3 / ESP32-C3** DevKits run on Espressif's QEMU like the ESP32.
+
 ## Microcontrollers (Arduino)
 
 Start screen → **Microcontrollers** (or ⌘⇧A): an Arduino workspace in the style of
