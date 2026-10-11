@@ -729,6 +729,10 @@ function boardLines(part: Part, sym: SymbolDef, board: NonNullable<ReturnType<ty
     ioNode.set(role.pin, nd)
     const d = drive?.get(role.pin)
     if (!d) continue
+    // a CMOS input left open floats somewhere mid-rail: 10 MΩ to Vcc/2 keeps an open pin between
+    // the logic thresholds (undefined) instead of at 0 V, and loads a real circuit by < 0.2 µA
+    vccUsed = true
+    lines.push(`R${k}_FLOAT ${nd} ${vcc}_mid 10Meg`)
     if (typeof d.en === "number" && typeof d.pu === "number" && typeof d.pd === "number") {
       if (d.en) {
         const x = `sbint_${k.toLowerCase()}_o`
@@ -743,7 +747,7 @@ function boardLines(part: Part, sym: SymbolDef, board: NonNullable<ReturnType<ty
     const en = wave(d.en, `${k}_EN`), v = wave(d.v, `${k}_V`), pu = wave(d.pu, `${k}_PU`), pd = wave(d.pd, `${k}_PD`)
     lines.push(`B${k} ${nd} 0 I=${en}*(V(${nd})-${v})/${PIN_R}+${pu}*(V(${nd})-${spiceNum(board.vcc)})/${spiceNum(PULLUP_R)}+${pd}*V(${nd})/${spiceNum(PULLDOWN_R)}`)
   }
-  if (vccUsed) lines.push(`V${R}_VCC ${vcc} 0 DC ${spiceNum(board.vcc)}`)
+  if (vccUsed) lines.push(`V${R}_VCC ${vcc} 0 DC ${spiceNum(board.vcc)}`, `V${R}_MID ${vcc}_mid 0 DC ${spiceNum(board.vcc / 2)}`)
 }
 
 const formatParamsSpice = (p: Record<string, string>) =>

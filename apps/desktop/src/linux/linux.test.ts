@@ -132,6 +132,8 @@ while True:
     // the program takes a moment to import gpiozero and set up its callbacks
     const open = await led(1.5)
     expect(Math.max(...open.slice(-5))).toBeLessThan(0.3)
+    // an open switch leaves GPIO27 floating: the pull-up decides, no phantom press at start-up
+    expect(serial).not.toContain("SW1 pressed")
     sim.setDoc({ ...doc, parts: doc.parts.map((p) => (p.ref === "SW1" ? { ...p, sim: { ...p.sim, Params: "closed=1" } } : p)) })
     const closed = await led(0.5)
     sim.dispose()

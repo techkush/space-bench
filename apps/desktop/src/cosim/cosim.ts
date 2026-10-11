@@ -111,8 +111,11 @@ export class CoSim {
       const def = b.board.pins[pin]
       if (def.adc !== undefined) analog.push([def.adc, Math.max(0, Math.min(vcc, v))])
       if (def.bit < 0) continue
-      const prev = b.levels.get(pin) ?? false
+      // between the thresholds: the last level read (Schmitt trigger); an input that has never had a
+      // defined level (floating) isn't set at all, so the chip's own pull-ups decide
+      const prev = b.levels.get(pin)
       const high = v > 0.6 * vcc ? true : v < 0.3 * vcc ? false : prev
+      if (high === undefined) continue
       b.levels.set(pin, high)
       digital.push([pin, high])
     }

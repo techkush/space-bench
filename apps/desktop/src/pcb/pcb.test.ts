@@ -219,7 +219,7 @@ describe("smart placement", () => {
     }
     expect(shorter).toBeGreaterThanOrEqual(6)
     expect(betterOrEqual).toBeGreaterThanOrEqual(7)
-  })
+  }, 30_000) // routes several example boards: ~4.5 s alone, more when the whole suite runs
 })
 
 import { resizeBoard } from "./board"
