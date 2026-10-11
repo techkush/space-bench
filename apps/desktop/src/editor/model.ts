@@ -88,7 +88,12 @@ export interface Doc {
   imports?: { path: string; library: boolean }[]
   /** set when the file is a library: library Filters version "1.0.0" */
   library?: { name: string; version?: string }
+  /** the sketch of each programmable board in the circuit (Arduino, Pico), by reference: A1 → its files */
+  firmware?: Record<string, Firmware>
 }
+
+/** An Arduino sketch: `sketch.ino` and any other files, plus libraries.txt (one library per line). */
+export interface Firmware { files: { name: string; content: string }[]; libraries?: string }
 
 export interface Measure { name: string; expr: string }
 

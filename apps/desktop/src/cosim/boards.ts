@@ -1,0 +1,96 @@
+// Programmable boards in a schematic: which KiCad symbols run firmware, and what each of
+// their pins is to the emulator (an I/O pin), to the circuit (a supply) or to both (ground).
+import { boardByType, type BoardDef } from "@/mcu/boards"
+import type { Doc, Part } from "@/editor/model"
+
+/** KiCad symbol name → the emulated board it runs as. */
+const SYMBOLS: [RegExp, string][] = [
+  [/^MCU_Module:Arduino_UNO_R[23]$/, "wokwi-arduino-uno"],
+  [/^MCU_Module:Arduino_Nano_v[23]\.x$/, "wokwi-arduino-nano"],
+  [/^MCU_Module:RaspberryPi_Pico(_W)?$/, "wokwi-pi-pico"],
+]
+
+/** The emulated board a schematic part runs as, or null when the part isn't programmable. */
+export function boardOf(part: Pick<Part, "lib">): BoardDef | null {
+  for (const [re, type] of SYMBOLS) if (re.test(part.lib)) return boardByType(type) ?? null
+  return null
+}
+
+export const isProgrammable = (part: Pick<Part, "lib">) => boardOf(part) !== null
+
+/** The programmable parts of a circuit, one per reference. */
+export function boardParts(doc: Pick<Doc, "parts">): { part: Part; board: BoardDef }[] {
+  const seen = new Set<string>()
+  const out: { part: Part; board: BoardDef }[] = []
+  for (const part of doc.parts) {
+    const board = boardOf(part)
+    if (!board || seen.has(part.ref)) continue
+    seen.add(part.ref)
+    out.push({ part, board })
+  }
+  return out
+}
+
+export type PinRole =
+  /** a chip pin: driven by the firmware, read by it, or both */
+  | { k: "io"; pin: string }
+  /** a supply the board puts out (its regulator) */
+  | { k: "supply"; volts: number }
+  | { k: "gnd" }
+
+/**
+ * What a symbol pin is, from its KiCad name: "D13" → I/O pin "13", "SDA/A4" → "A4",
+ * "GPIO26_ADC0" → "GP26", "+5V" → a 5 V supply, "GND" → ground. Pins the emulator doesn't
+ * model (RESET, AREF, VIN, RUN …) give null and are left unconnected.
+ */
+export function pinRole(board: BoardDef, name: string): PinRole | null {
+  const n = name.replace(/~\{([^}]*)\}/g, "$1").trim()
+  if (/^A?GND$/i.test(n)) return { k: "gnd" }
+  if (/^\+?5V$/i.test(n) || n === "VBUS") return { k: "supply", volts: 5 }
+  if (n === "VSYS") return { k: "supply", volts: 5 }
+  if (/^\+?3V3$/i.test(n)) return { k: "supply", volts: 3.3 }
+  if (n === "IOREF") return { k: "supply", volts: board.vcc }
+  for (const part of n.split("/")) {
+    let m = /^D(\d+)$/.exec(part)
+    if (m && board.pins[m[1]]) return { k: "io", pin: m[1] }
+    m = /^A(\d+)$/.exec(part)
+    if (m && board.pins[`A${m[1]}`]) return { k: "io", pin: `A${m[1]}` }
+    m = /^GPIO(\d+)/.exec(part)
+    if (m && board.pins[`GP${m[1]}`]) return { k: "io", pin: `GP${m[1]}` }
+  }
+  return null
+}
+
+// ── what the firmware does to its pins during one co-simulation frame ───────────────────
+
+/** A level over a frame: a constant, or steps — [t, value] means `value` from t (seconds) on. */
+export type Wave = number | [number, number][]
+/** One chip pin: the level it drives (V), whether it drives (1) or is an input (0), its pull resistors (0/1). */
+export interface PinDrive { v: Wave; en: Wave; pu: Wave; pd: Wave }
+/** chip pin name ("13", "A0", "GP15") → what it does */
+export type BoardDrive = Map<string, PinDrive>
+
+/** Output resistance of a driven pin (ATmega328P: ~25 Ω at 5 V), internal pull resistors, and a supply's source resistance. */
+export const PIN_R = 25
+export const PULLUP_R = 35e3
+export const PULLDOWN_R = 50e3
+export const SUPPLY_R = 0.05
+
+/** A sketch to start from when a board is placed. */
+export function starterSketch(board: BoardDef): string {
+  return `// ${board.name} — this sketch runs on the board in the schematic.
+// Its pins drive the circuit, and the circuit's voltages are what it reads.
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(LED_BUILTIN, OUTPUT);
+}
+
+void loop() {
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(500);
+  digitalWrite(LED_BUILTIN, LOW);
+  delay(500);
+}
+`
+}

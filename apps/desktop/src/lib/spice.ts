@@ -16,6 +16,7 @@ import { resolveFeeds, sensorSignal } from "@/lib/feeds"
 import { currentSensitivity, curveTable, QUANTITIES, SENSOR_MODELS, sensorModelFor, type Quantity } from "@/lib/sensors"
 import { pwlSpec, samplePwl, type Signal } from "@/lib/stimulus"
 import { parseSI } from "@/lib/units"
+import { boardOf, isProgrammable, pinRole, PIN_R, PULLDOWN_R, PULLUP_R, SUPPLY_R, type BoardDrive, type Wave } from "@/cosim/boards"
 
 // ---------------------------------------------------------------- values & params
 
@@ -57,7 +58,7 @@ export function parsePins(text: string | undefined): Record<string, string> {
 
 // ---------------------------------------------------------------- resolution
 
-export type SimKind = "R" | "C" | "L" | "V" | "I" | "D" | "NPN" | "PNP" | "NMOS" | "PMOS" | "NJFET" | "PJFET" | "OPAMP" | "555" | "REG" | "REGADJ" | "SWITCH" | "VSWITCH" | "TEMPSENSOR" | "SENSOR" | "SUBCKT"
+export type SimKind = "R" | "C" | "L" | "V" | "I" | "D" | "NPN" | "PNP" | "NMOS" | "PMOS" | "NJFET" | "PJFET" | "OPAMP" | "555" | "REG" | "REGADJ" | "SWITCH" | "VSWITCH" | "TEMPSENSOR" | "SENSOR" | "SUBCKT" | "MCU"
 
 export interface ResolvedSim {
   kind: SimKind
@@ -116,6 +117,8 @@ export function resolveSim(part: Part): ResolvedSim | { error: string } | null {
   const sym = symbolFor(part)
   if (!sym) return { error: `symbol ${part.lib} not loaded` }
   if (isVirtual(part)) return null
+  // Arduino / Pico: the firmware drives the pins (cosim/); a plain run sees the board's supplies
+  if (isProgrammable(part)) return { kind: "MCU", pins: {}, params: {}, origin: "inferred", note: "runs its sketch when the circuit and firmware simulate together" }
   // the power unit of a multi-unit IC (e.g. LM358 unit C: V+/V−) only connects pins; the other units' models use them
   const u = sym.units[part.unit - 1]
   if (sym.units.length > 1 && u && u.pins.length && u.pins.every((p) => p.t === "power_in" || p.t === "power_out")) return null
@@ -333,7 +336,13 @@ export function optionsLine(analysis: AnalysisKind, o: SolverOptions = solver): 
   return `.options ${opts.join(" ")}`
 }
 
-export function buildNetlist(doc: Doc, nl: Netlist, analysis: AnalysisKind, opts: { temp?: number } = {}): SpiceNetlist {
+/**
+ * `boards`: what each programmable board's pins do over the run (co-simulation, by reference);
+ * `ic`: net voltages to start from (`.ic`, carried from one co-simulation frame to the next).
+ */
+export interface NetlistOptions { temp?: number; boards?: Map<string, BoardDrive>; ic?: Map<string, number> }
+
+export function buildNetlist(doc: Doc, nl: Netlist, analysis: AnalysisKind, opts: NetlistOptions = {}): SpiceNetlist {
   const issues: Issue[] = []
   const nodes = new Map<string, string>()
   const byNet = new Map<string, string>()
@@ -647,6 +656,11 @@ export function buildNetlist(doc: Doc, nl: Netlist, analysis: AnalysisKind, opts
         issues.push({ severity: "warning", message: `${ref} not simulated: subcircuit ${sim.model ?? "?"} needs a model library (coming with model import)`, ref: part.ref })
         continue
       }
+      case "MCU": {
+        if (done.has(part.ref)) break
+        boardLines(part, sym, boardOf(part)!, opts.boards?.get(part.ref), net, node, lines, elements)
+        break
+      }
     }
     done.add(part.ref)
     simulated++
@@ -657,10 +671,79 @@ export function buildNetlist(doc: Doc, nl: Netlist, analysis: AnalysisKind, opts
     optionsLine(analysis),
     ...models.values(),
     ...lines,
+    ...[...(opts.ic ?? [])].filter(([n]) => byNet.has(n) && byNet.get(n) !== "0").map(([n, v]) => `.ic V(${byNet.get(n)})=${spiceNum(v)}`),
     ...(opts.temp !== undefined ? [`.temp ${spiceNum(opts.temp)}`] : feeds.has("ROOM.TEMP") ? [`.temp ${spiceNum(feeds.get("ROOM.TEMP")!.signal.at(0))}`] : []),
     analysisLine(doc, analysis),
   ].join("\n")
   return { text, nodes, elements, issues, simulated }
+}
+
+/** Steps as a PWL source: each change ramps over 20 ns. */
+function stepPwl(steps: [number, number][]): string {
+  const TR = 20e-9
+  const pts: number[] = [0, steps[0]?.[1] ?? 0]
+  for (let i = 1; i < steps.length; i++) {
+    const t = Math.max(steps[i][0], pts[pts.length - 2] + TR)
+    pts.push(t, steps[i - 1][1], t + TR, steps[i][1])
+  }
+  return `PWL(${pts.map(spiceNum).join(" ")})`
+}
+
+/**
+ * A programmable board: its supplies, its ground, and - while its firmware runs - each I/O pin
+ * as the firmware leaves it: driven through PIN_R, an input (high impedance), or pulled up/down.
+ * A pin that changes between output and input during the run is a behavioural current source.
+ */
+function boardLines(part: Part, sym: SymbolDef, board: NonNullable<ReturnType<typeof boardOf>>, drive: BoardDrive | undefined,
+  net: (pin: string) => string | undefined, node: (net: string | undefined) => string, lines: string[], elements: Map<string, string>) {
+  const R = part.ref.toUpperCase().replace(/[^A-Z0-9_]/g, "_")
+  const vcc = `sbint_${R.toLowerCase()}_vcc`
+  let vccUsed = false
+  const grounded = new Set<string>()
+  const ioNode = new Map<string, string>()
+  const wave = (w: Wave, name: string): string => {
+    if (typeof w === "number") return spiceNum(w)
+    const n = `sbint_${name.toLowerCase()}`
+    lines.push(`V${name} ${n} 0 ${stepPwl(w)}`)
+    return `V(${n})`
+  }
+  for (const pin of sym.units.flatMap((u) => u.pins)) {
+    const role = pinRole(board, pin.name)
+    const n = role ? net(pin.n) : undefined
+    if (!role || n === undefined) continue
+    const nd = node(n)
+    const k = `${R}_${pin.n.replace(/[^A-Za-z0-9]/g, "_")}`
+    if (role.k === "gnd") {
+      if (nd !== "0" && !grounded.has(nd)) { grounded.add(nd); lines.push(`V${k}_GND ${nd} 0 0`) }
+      continue
+    }
+    if (role.k === "supply") {
+      const x = `sbint_${k.toLowerCase()}_sup`
+      lines.push(`V${k}_SUP ${x} 0 DC ${spiceNum(role.volts)}`, `R${k}_SUP ${x} ${nd} ${SUPPLY_R}`)
+      elements.set(`V${k}_SUP`, `${part.ref}.${pin.name}`)
+      continue
+    }
+    // the same chip pin on two symbol pins (the Uno's SDA/A4 header): one pin, joined
+    const first = ioNode.get(role.pin)
+    if (first !== undefined) { if (first !== nd) lines.push(`V${k}_JOIN ${nd} ${first} 0`); continue }
+    ioNode.set(role.pin, nd)
+    const d = drive?.get(role.pin)
+    if (!d) continue
+    if (typeof d.en === "number" && typeof d.pu === "number" && typeof d.pd === "number") {
+      if (d.en) {
+        const x = `sbint_${k.toLowerCase()}_o`
+        lines.push(`V${k}_OUT ${x} 0 ${typeof d.v === "number" ? `DC ${spiceNum(d.v)}` : stepPwl(d.v)}`, `R${k}_OUT ${x} ${nd} ${PIN_R}`)
+        elements.set(`V${k}_OUT`, `${part.ref}.${role.pin}`)
+      } else {
+        if (d.pu) { vccUsed = true; lines.push(`R${k}_PU ${nd} ${vcc} ${spiceNum(PULLUP_R)}`) }
+        if (d.pd) lines.push(`R${k}_PD ${nd} 0 ${spiceNum(PULLDOWN_R)}`)
+      }
+      continue
+    }
+    const en = wave(d.en, `${k}_EN`), v = wave(d.v, `${k}_V`), pu = wave(d.pu, `${k}_PU`), pd = wave(d.pd, `${k}_PD`)
+    lines.push(`B${k} ${nd} 0 I=${en}*(V(${nd})-${v})/${PIN_R}+${pu}*(V(${nd})-${spiceNum(board.vcc)})/${spiceNum(PULLUP_R)}+${pd}*V(${nd})/${spiceNum(PULLDOWN_R)}`)
+  }
+  if (vccUsed) lines.push(`V${R}_VCC ${vcc} 0 DC ${spiceNum(board.vcc)}`)
 }
 
 const formatParamsSpice = (p: Record<string, string>) =>

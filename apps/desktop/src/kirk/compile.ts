@@ -359,6 +359,8 @@ function buildDoc(ir: IR, file: File, src: string, prev: Doc | null, componentMo
     stimulus: extra.stimulus,
     // the board layout is not part of the code; keep it across code edits
     pcb: prev?.pcb,
+    // so are the boards' sketches
+    firmware: prev?.firmware,
   }
 
   // which units of each part to draw
