@@ -125,4 +125,18 @@ describe("sketches in a project", () => {
     expect(sketchFolderOf("firmware/line-follower/diagram.json")).toBe("firmware/line-follower")
     expect(await newSketch(p, "Line Follower")).toBe("firmware/line-follower-2")
   })
+
+  it("a Raspberry Pi project (main.py) saves and opens again", async () => {
+    const { loadSketch, saveSketch } = await import("@/mcu/sketchfs")
+    const { blankSketch } = await import("@/mcu/examples")
+    const vfs = memoryFS()
+    const p = await createProject(vfs, "/P", "Pi")
+    const blank = blankSketch("sb-raspberry-pi-5")
+    const files = [...blank.files, { name: "util.py", content: "X = 1\n" }]
+    await saveSketch(p, "firmware/hello", { name: "hello", files, diagram: blank.diagram })
+    const s = await loadSketch(p, "firmware/hello")
+    expect(s.files.map((f) => f.name)).toEqual(["main.py", "util.py", "requirements.txt"])
+    expect(s.files[0].content).toContain("Hello, world")
+    expect(s.diagram.parts[0].type).toBe("sb-raspberry-pi-5")
+  })
 })

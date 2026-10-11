@@ -130,6 +130,8 @@ fn linux_send(console: Option<String>, agent: Option<String>) -> Result<(), Stri
 fn linux_qmp(cmd: String) -> Result<(), String> { linux::qmp_cmd(&cmd) }
 #[tauri::command]
 fn linux_stop() { linux::stop() }
+#[tauri::command]
+async fn brew_install(pkg: String) -> Result<String, String> { tauri::async_runtime::spawn_blocking(move || linux::brew_install(&pkg)).await.map_err(|e| e.to_string())? }
 
 /// Renode boards (STM32 / nRF52) — see renode.rs.
 #[tauri::command]
@@ -170,7 +172,9 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![simulate, ngspice_run, ngspice_halt, ngspice_alter, ngspice_lib_path, ngspice_version, ngspice_path, claude_code_run, claude_code_cancel, claude_code_version, arduino_compile, arduino_status, arduino_install_core, esp32_status, esp32_install, esp32_start, esp32_poll, esp32_send, esp32_stop, esp32_qmp, linux_status, linux_fetch, linux_disk, linux_save, linux_start, linux_poll, linux_send, linux_qmp, linux_stop, renode_status, renode_install, renode_start, renode_cmd, renode_stage, renode_stop])
-    .run(tauri::generate_context!())
-    .expect("error while building tauri application");
+    .invoke_handler(tauri::generate_handler![simulate, ngspice_run, ngspice_halt, ngspice_alter, ngspice_lib_path, ngspice_version, ngspice_path, claude_code_run, claude_code_cancel, claude_code_version, arduino_compile, arduino_status, arduino_install_core, esp32_status, esp32_install, esp32_start, esp32_poll, esp32_send, esp32_stop, esp32_qmp, linux_status, linux_fetch, linux_disk, linux_save, linux_start, linux_poll, linux_send, linux_qmp, linux_stop, brew_install, renode_status, renode_install, renode_start, renode_cmd, renode_stage, renode_stop])
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application")
+    // the emulators are separate processes: stop them with the app (a VM left running keeps its disk locked)
+    .run(|_, e| if let tauri::RunEvent::Exit = e { linux::sync_and_stop(); esp32::stop(); renode::stop(); });
 }

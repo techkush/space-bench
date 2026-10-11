@@ -36,6 +36,7 @@ import type { ChipLink } from "@/cosim/chip"
 import { linuxChip } from "@/linux/chip"
 import { renodeChip } from "@/renode/chip"
 import { renodeStage } from "@/renode/host"
+import { CHANGES_SYSTEM, checkSetup, installSetup } from "./setup"
 import { LogicBuffer } from "./logic"
 import { LogicAnalyzer } from "./LogicAnalyzer"
 import type { FromWorker, ToWorker } from "./sim.worker"
@@ -79,8 +80,10 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
   const [diagram, setDiagramState] = useState<Diagram>(initial.diagram)
   const [saved, setSaved] = useState(() => JSON.stringify([initial.name, initial.files, initial.diagram]))
   const dirty = JSON.stringify([name, files, diagram]) !== saved
-  const [active, setActive] = useState("sketch.ino")
-  const [tabs, setTabs] = useState<string[]>(["sketch.ino"])
+  // the main board's program: sketch.ino, or main.py on a Linux board
+  const mainFile = (fs: SketchFileData[]) => (!fs.some((f) => f.name === "sketch.ino") && fs.some((f) => f.name === "main.py") ? "main.py" : "sketch.ino")
+  const [active, setActive] = useState(() => mainFile(initial.files))
+  const [tabs, setTabs] = useState<string[]>(() => [mainFile(initial.files)])
   /** compile results per board (by board id) */
   const [statuses, setStatuses] = useState<Record<string, Status>>({})
   /** the compiled firmware per board: Intel HEX (AVR) or a flash image (RP2040, ESP32) */
@@ -89,6 +92,8 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
   const [paused, setPaused] = useState(false)
   const [frames, setFrames] = useState<Record<string, Frame>>({})
   const [serials, setSerials] = useState<Record<string, string>>({})
+  const serialsRef = useRef(serials)
+  serialsRef.current = serials
   const [serialIn, setSerialIn] = useState("")
   const [lineEnd, setLineEnd] = useState<"\n" | "\r\n" | "">("\n")
   const [bottom, setBottom] = useState<"serial" | "output" | "problems" | "logic">("serial")
@@ -96,6 +101,23 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
   const [bottomH, setBottomH] = useState(200)
   const [editorW, setEditorW] = useState(() => Math.round(window.innerWidth * 0.32))
   const [aiOpen, setAiOpen] = useState(false)
+  /** a message for the assistant ("Fix with assistant"): the chat sends it */
+  const [aiAsk, setAiAsk] = useState<{ id: number; text: string } | null>(null)
+  const askAi = useCallback((text: string) => { setAiOpen(true); setAiAsk({ id: Date.now(), text }) }, [])
+  /** the last error from running (the assistant reads it) */
+  const [lastError, setLastError] = useState("")
+  /** a run that failed: the toast offers the assistant, which finds the cause and fixes it */
+  const fail = useCallback((message: string, description?: string) => {
+    const full = description ? `${message} — ${description}` : message
+    setLastError(full)
+    toast.error(message, { description, duration: 15_000, action: { label: "Fix with assistant", onClick: () => askAi(`Running the project failed: ${full}\nFind the cause and fix it, then run it again.`) } })
+  }, [askAi])
+  /** the assistant asks before it installs anything */
+  const [perm, setPerm] = useState<{ title: string; detail: string; reason: string; resolve: (ok: boolean) => void } | null>(null)
+  const askPermission = useCallback((title: string, detail: string, reason: string) => new Promise<boolean>((resolve) => setPerm({ title, detail, reason, resolve })), [])
+  const answer = (ok: boolean) => { perm?.resolve(ok); setPerm(null) }
+  /** an install (or a command on the Pi) in progress */
+  const [installing, setInstalling] = useState<string | null>(null)
   const [aiW, setAiW] = useState(380)
   const [selected, setSelected] = useState<string | null>(null)
   const [settingsFor, setSettingsFor] = useState<string | null>(null)
@@ -219,6 +241,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
     workers.current.clear()
     if (espTimer.current) { clearInterval(espTimer.current); espTimer.current = null; espStop() }
     setFrames({})
+    setLastError("")
     const todo = boards.filter((b) => fws[b.id] !== undefined)
     // QEMU runs one ESP32 at a time
     const esps = todo.filter((b) => boardByType(b.type)?.chip === "esp32")
@@ -226,7 +249,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
     const espId = esps[0]?.id
     if (espId) {
       // the firmware runs in QEMU; the worker solves the circuit from the bridge's pin reports
-      try { await espStart(fws[espId] as string, s.esp32QemuPath, boardByType(esps[0].type)?.esp ?? "esp32") } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); setBottom("output"); return }
+      try { await espStart(fws[espId] as string, s.esp32QemuPath, boardByType(esps[0].type)?.esp ?? "esp32") } catch (e) { fail(e instanceof Error ? e.message : String(e)); setBottom("output"); return }
     }
     setSerials({})
     logic.current.reset()
@@ -251,8 +274,17 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
           logicPins.set(id, m.frame.logicPins.map(tag))
           logic.current.push(multi ? m.frame.logic.map(([p, t, l]) => [tag(p), t, l]) : m.frame.logic, [...logicPins.values()].flat(), m.frame.seconds)
           setFrames((old) => ({ ...old, [id]: m.frame }))
-        } else if (m.type === "serial") addSerial(id, m.text)
-        else if (m.type === "error") { toast.error(multi ? `${id}: ${m.message}` : m.message); stop() }
+        } else if (m.type === "serial") {
+          addSerial(id, m.text)
+          // a Raspberry Pi program that crashed (a Python traceback): offer the assistant
+          const crash = /\[program exited with code ([1-9]\d*)\]/.exec(m.text)
+          if (crash) {
+            const said = (serialsRef.current[id] ?? "") + (bufs.get(id) ?? "")
+            const why = said.split("\n").map((l) => l.trim()).filter((l) => /^\w*(Error|Exception)\b/.test(l)).pop()
+            fail(`${multi ? `${id}: ` : ""}the program stopped with an error (exit code ${crash[1]})`, why)
+          }
+        }
+        else if (m.type === "error") { fail(multi ? `${id}: ${m.message}` : m.message); stop() }
         else if (m.type === "esp32-out") espSend(undefined, m.bytes).catch(() => {})
       }
       if (esp) {
@@ -261,7 +293,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
           if (!r) return
           if (r.serial) addSerial(id, r.serial)
           if (r.bridge.length) w.postMessage({ type: "esp32-in", bytes: r.bridge } satisfies ToWorker)
-          if (!r.running) { toast.error("The ESP32 emulator stopped", { description: r.log.split("\n").filter(Boolean).slice(-3).join(" · ") }); stop() }
+          if (!r.running) { fail("The ESP32 emulator stopped", r.log.split("\n").filter(Boolean).slice(-3).join(" · ")); stop() }
         }, 33)
       }
       const fedDef = boardByType(b.type)
@@ -289,13 +321,13 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
                 if (run !== fedRun.current) break
                 w.postMessage({ type: "fed-frame", frame, seconds: T } satisfies ToWorker)
               }
-            } catch (e) { if (run === fedRun.current) { toast.error(`${id}: ${e instanceof Error ? e.message : String(e)}`); stop() } }
+            } catch (e) { if (run === fedRun.current) { fail(`${id}: ${e instanceof Error ? e.message : String(e)}`); stop() } }
           })()
-        } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); stop(); return }
+        } catch (e) { fail(e instanceof Error ? e.message : String(e)); stop(); return }
       }
     }
     setRunning(true); setPaused(false)
-  }, [simDiagram, s.mcuSpeed, s.esp32QemuPath, ui, stop, boards, multi])
+  }, [simDiagram, s.mcuSpeed, s.esp32QemuPath, ui, stop, boards, multi, fail])
   const firmware = () => Object.fromEntries(Object.entries(hexes).filter(([id]) => boards.some((b) => b.id === id)).map(([id, h]) => [id, h.hex]))
   // changing the wiring while running restarts with the new circuit
   const runningDiagram = useRef<Diagram | null>(null)
@@ -432,8 +464,8 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
   const open = (n: string) => { setActive(n); setTabs((t) => (t.includes(n) ? t : [...t, n])) }
   const closeTab = (n: string) => {
     const rest = tabs.filter((t) => t !== n)
-    setTabs(rest.length ? rest : ["sketch.ino"])
-    if (active === n) setActive(rest[rest.length - 1] ?? "sketch.ino")
+    setTabs(rest.length ? rest : [mainFile(files)])
+    if (active === n) setActive(rest[rest.length - 1] ?? mainFile(files))
   }
   /** files go in the focused board's folder */
   const pre = focusId ? prefixOf(focusId, mainId) : ""
@@ -514,8 +546,9 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
 
   // ── AI host ────────────────────────────────────────────────────────────────────────────
   const boardList = builds.map((b) => `${b.part.id}: ${b.def?.name ?? b.part.type} (${b.part.type}) — files ${b.prefix ? `in ${b.prefix}` : "at the top level"}`).join("; ")
-  const live = useRef({ files, diagram, status, serial, frame, running, run, compile, stop, sendUi, board, boardList, serials })
-  live.current = { files, diagram, status, serial, frame, running, run, compile, stop, sendUi, board, boardList, serials }
+  const defs = builds.flatMap((b) => (b.def ? [b.def] : []))
+  const live = useRef({ files, diagram, status, serial, frame, running, run, compile, stop, sendUi, board, boardList, serials, defs, cliPath: s.arduinoCliPath, lastError, askPermission })
+  live.current = { files, diagram, status, serial, frame, running, run, compile, stop, sendUi, board, boardList, serials, defs, cliPath: s.arduinoCliPath, lastError, askPermission }
   const host = useMemo<McuAgentHost>(() => ({
     project: () => {
       const l = live.current
@@ -524,6 +557,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
         name, board: l.boardList.includes(";") ? `several boards, each with its own sketch — ${l.boardList}. Write another board's files as "<id>/sketch.ino".` : l.board ? `${l.board.name} (${l.board.type})` : "none", files: l.files, diagram: diagramText(l.diagram),
         lastCompile: st.kind === "ok" ? `ok — ${st.out.flash ? `${st.out.flash.used} bytes flash` : ""}` : st.kind === "error" ? `failed:\n${st.message ?? st.out?.log.slice(-2500)}` : "",
         serial: Object.keys(l.serials).length > 1 ? Object.entries(l.serials).map(([id, t]) => `[${id}]\n${t}`).join("\n") : l.serial,
+        lastError: l.lastError,
       }
     },
     writeFile: (n, content) => {
@@ -531,7 +565,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
       const m = /^([\w-]+)\/([^/]+)$/.exec(n.trim())
       const own = m && boardsOf(live.current.diagram).slice(1).some((b) => b.id === m[1])
       const clean = own ? `${m[1]}/${m[2]}` : n.trim().replace(/^.*\//, "")
-      if (!/\.(ino|h|hpp|c|cpp|txt)$/.test(clean)) return `Not written: ${clean} — use .ino, .h, .cpp or libraries.txt`
+      if (!/\.(ino|h|hpp|c|cpp|txt|py)$/.test(clean)) return `Not written: ${clean} — use .ino, .h, .cpp, libraries.txt, or .py / requirements.txt on a Raspberry Pi`
       setFiles((fs) => (fs.some((f) => f.name === clean) ? fs.map((f) => (f.name === clean ? { ...f, content } : f)) : [...fs, { name: clean, content }]))
       return `Wrote ${clean} (${content.split("\n").length} lines)`
     },
@@ -612,10 +646,45 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
       live.current.sendUi(part, u)
       return `${part} ← ${value}`
     },
+    checkSetup: async () => {
+      const items = await checkSetup(live.current.defs, live.current.cliPath)
+      if (!items.length) return "Nothing to check — add a board first."
+      return items.map((i) => `${i.ok ? "ok     " : "MISSING"} ${i.id} — ${i.label}: ${i.detail}${!i.ok && i.install ? ` (install: ${i.install})` : ""}`).join("\n") + (items.every((i) => i.ok) ? "\nEverything this project needs is installed." : "")
+    },
+    install: async (item, reason) => {
+      const items = await checkSetup(live.current.defs, live.current.cliPath)
+      const it = items.find((i) => i.id === item.trim())
+      if (!it) return { ok: false, text: `Unknown item ${item} — check_setup lists: ${items.map((i) => i.id).join(", ")}` }
+      if (it.ok) return { ok: true, text: `${it.label} is already installed (${it.detail})` }
+      if (!it.install) return { ok: false, text: `${it.label} can't be installed from here: ${it.detail}` }
+      if (!(await live.current.askPermission(`Install ${it.label}?`, it.install, reason)))
+        return { ok: false, text: "The user didn't allow the install. Stop, and tell them how to install it themselves (Settings → Microcontrollers)." }
+      setInstalling(`Installing ${it.label}…`)
+      try { return { ok: true, text: await installSetup(it.id, live.current.defs, live.current.cliPath, (t) => setInstalling(`${it.label}: ${t}`)) } }
+      catch (e) { return { ok: false, text: `Install failed: ${e instanceof Error ? e.message : String(e)}` } }
+      finally { setInstalling(null) }
+    },
+    piShell: async (cmd, reason) => {
+      const b = live.current.defs.find((d) => d.chip === "linux")
+      if (!b) return { ok: false, text: "This project has no Raspberry Pi board" }
+      // installing or changing the system is the user's call
+      if (CHANGES_SYSTEM.test(cmd) && !(await live.current.askPermission("Run this on the Raspberry Pi?", cmd, reason)))
+        return { ok: false, text: "The user didn't allow it. Stop, and give them the command to run in the Terminal tab themselves." }
+      // the program stops (one program at a time); let its last frame finish first
+      if (live.current.running) { live.current.stop(); await new Promise((r) => setTimeout(r, 1000)) }
+      setInstalling(`Raspberry Pi: ${cmd.slice(0, 60)}`)
+      try {
+        const { piExec } = await import("@/linux/exec")
+        const r = await piExec(b.linux ?? "pi5", cmd, 900, (t) => setInstalling(t))
+        return { ok: r.code === 0, text: `exit code ${r.code ?? "none (timed out)"}\n${r.output.slice(-4000).trim() || "(no output)"}` }
+      } catch (e) { return { ok: false, text: e instanceof Error ? e.message : String(e) } }
+      finally { setInstalling(null) }
+    },
   }), [name, setDiagram])
   const liveStatus = useRef<Status | null>(null)
   liveStatus.current = status
-  const profile = useMemo(() => mcuProfile(host), [host])
+  const piProject = isLinuxBoard(board)
+  const profile = useMemo(() => mcuProfile(host, piProject), [host, piProject])
 
   // ── chrome ─────────────────────────────────────────────────────────────────────────────
   const statusBadge = (
@@ -826,6 +895,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
                 {focusStatus.kind === "error" && (
                   <>
                     {focusStatus.message && <div className="mb-2 text-destructive">{focusStatus.message}</div>}
+                    <Button size="sm" variant="outline" className="mb-2 mr-2" onClick={() => askAi(`It doesn't build: ${focusStatus.message ?? focusStatus.out?.diagnostics.filter((d) => d.severity === "error").slice(0, 8).map((d) => `${d.file}:${d.line}: ${d.message}`).join("\n") ?? "see the compiler output"}\nFind the cause and fix it, then run it.`)}><Bot /> Fix with assistant</Button>
                     {focusStatus.message?.includes("core is not installed") && board && (
                       <Button size="sm" className="mb-2" onClick={async () => { const id = toast.loading(`Installing ${coreOf(board.fqbn)}…`); try { await installCore(coreOf(board.fqbn), s.arduinoCliPath, board.coreUrl); toast.success("Installed", { id }); compile() } catch (e) { toast.error(String(e), { id }) } }}><Download /> Install {coreOf(board.fqbn)}</Button>
                     )}
@@ -838,6 +908,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
             {bottom === "problems" && (
               <div className="min-h-0 flex-1 overflow-auto py-1 text-xs">
                 {!diagnostics.length && <div className="px-3 py-1 text-muted-foreground">No problems.</div>}
+                {errors.length > 0 && <Button size="sm" variant="outline" className="mx-3 my-1" onClick={() => askAi(`It doesn't build:\n${errors.slice(0, 8).map((d) => `${d.file}:${d.line}: ${d.message}`).join("\n")}\nFind the cause and fix it, then run it.`)}><Bot /> Fix with assistant</Button>}
                 {diagnostics.map((d, i) => (
                   <button key={i} className="flex w-full items-start gap-2 px-3 py-1 text-left hover:bg-accent/60" onClick={() => { open(d.file); setTimeout(() => window.dispatchEvent(new CustomEvent("sb-reveal-line", { detail: d })), 50) }}>
                     {d.severity === "error" ? <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" /> : <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" />}
@@ -854,12 +925,26 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
           <>
             <Splitter axis="x" onDrag={(d) => setAiW((w) => Math.max(300, Math.min(700, w - d)))} onReset={() => setAiW(380)} />
             <div className="flex min-h-0 shrink-0 flex-col border-l" style={{ width: aiW }}>
-              <AiChat profile={profile} sessionKey={chatKey ?? "sketch"} onOpenSettings={onOpenSettings} onOpenTerminal={() => setBottom("output")} onClose={() => setAiOpen(false)} />
+              <AiChat profile={profile} sessionKey={chatKey ?? "sketch"} request={aiAsk} onOpenSettings={onOpenSettings} onOpenTerminal={() => setBottom("output")} onClose={() => setAiOpen(false)} />
             </div>
           </>
         )}
       </div>
 
+      <Dialog open={!!perm} onOpenChange={(o) => { if (!o) answer(false) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{perm?.title}</DialogTitle>
+            <DialogDescription>The assistant asks to do this{perm?.reason ? ` — ${perm.reason}` : "."}</DialogDescription>
+          </DialogHeader>
+          <pre className="whitespace-pre-wrap break-all rounded-md bg-muted px-3 py-2 font-mono text-xs">{perm?.detail}</pre>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => answer(false)}>Don't allow</Button>
+            <Button onClick={() => answer(true)}><Download /> Allow</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {installing && <div className="fixed bottom-4 left-1/2 z-50 flex max-w-[80vw] -translate-x-1/2 items-center gap-2 rounded-full border bg-popover px-3 py-1.5 text-xs shadow-md"><Loader2 className="size-3.5 shrink-0 animate-spin" /><span className="truncate">{installing}</span></div>}
       <CheckDialog open={!!checking} onOpenChange={(o) => !o && setChecking(null)} diagram={focusId ? boardDiagram(simDiagram, focusId) : simDiagram} board={board} snapshot={checking} />
       <AddPartDialog open={adding} onOpenChange={setAdding} onAdd={addPart} hasBoard={!!boardPart} />
       <PartSettingsDialog part={diagram.parts.find((p) => p.id === settingsFor) ?? null} onClose={() => setSettingsFor(null)} onChange={updatePart} onBoardType={changeBoard} />

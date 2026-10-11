@@ -13,6 +13,7 @@ It talks JSON lines over the virtio-serial port /dev/virtio-ports/spacebench:
   {"op":"get","path":p,"offset":o,"length":n}    {"ev":"data","size":total,"data":base64}
   {"op":"run","cmd":"python3 main.py","cwd":d}   {"ev":"out","text":…}… {"ev":"exit","code":n}
   {"op":"stdin","text":…} / {"op":"kill"}
+  {"op":"sync"}                                  {"ev":"sync"} — everything written is on the disk
 
 Pins are the simulated controller's lines (gpio-sim, set up by spacebench-gpio-setup): out is
 1/0 when a program drives the line, -1 when it is an input; pu/pd are the bias the program asked
@@ -23,7 +24,7 @@ import base64, glob, json, os, pty, select, signal, subprocess, sys, threading, 
 import gpiod
 
 # Space Bench updates the guest's files (and re-executes this agent) when its bundled version differs
-VERSION = "5"
+VERSION = "6"
 PORT = "/dev/virtio-ports/spacebench"
 POLL_S = 0.0005  # output lines are sampled at 2 kHz
 
@@ -270,8 +271,19 @@ class Agent:
                 os.write(self.pty, m["text"].encode())
         elif op == "kill":
             self.kill()
+        elif op == "sync":
+            os.sync()
+            self.send({"ev": "sync"})
 
     def serve(self):
+        # Space Bench stops the VM by ending QEMU: write files (pip installs, the program) to the
+        # disk within half a second instead of Linux's 30, so a stop never loses them
+        for k, v in (("dirty_expire_centisecs", "50"), ("dirty_writeback_centisecs", "50")):
+            try:
+                with open(f"/proc/sys/vm/{k}", "w") as f:
+                    f.write(v)
+            except OSError:
+                pass
         threading.Thread(target=self.pins.watch, daemon=True).start()
         threading.Thread(target=self.pins.poll, daemon=True).start()
         self.send({"ev": "ready", "board": self.board(), "lines": self.pins.n})

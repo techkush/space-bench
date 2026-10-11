@@ -81,7 +81,12 @@ export function clearChat(key: string) {
 }
 const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l) } }
 
-export function AiChat({ host, profile, sessionKey = "default", onOpenSettings, onOpenTerminal, onClose }: { host?: AgentHost; profile?: AgentProfile; sessionKey?: string; onOpenSettings: () => void; onOpenTerminal: () => void; onClose: () => void }) {
+export function AiChat({ host, profile, sessionKey = "default", request, onOpenSettings, onOpenTerminal, onClose }: {
+  host?: AgentHost; profile?: AgentProfile; sessionKey?: string
+  /** a message from the app ("Fix with assistant"): sent once (a new id sends again) */
+  request?: { id: number; text: string } | null
+  onOpenSettings: () => void; onOpenTerminal: () => void; onClose: () => void
+}) {
   const s = useSettings()
   const sess = useSyncExternalStore(subscribe, () => sessionOf(sessionKey))
   const { items, history, busy } = sess
@@ -156,6 +161,15 @@ export function AiChat({ host, profile, sessionKey = "default", onOpenSettings, 
       setItems((x) => x.map((y) => (y.kind === "tool" && y.status === "running" ? { ...y, status: "error", summary: "stopped" } : y)))
     }
   }
+
+  // the app's message goes out once the assistant is connected and free; without a connection it waits in the box
+  const asked = useRef(0)
+  useEffect(() => {
+    if (!request || request.id === asked.current || busy || (cli && cliVersion === undefined)) return
+    asked.current = request.id
+    if (ready) void send(request.text)
+    else setText(request.text)
+  }, [request, busy, ready, cli, cliVersion]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className={cn("flex h-full min-h-0 flex-col bg-background", drag && "ring-2 ring-inset ring-ring")}

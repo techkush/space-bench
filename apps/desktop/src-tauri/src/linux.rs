@@ -105,8 +105,21 @@ fn connect(p: &std::path::Path) -> Result<UnixStream, String> {
   Err(format!("QEMU's socket {} did not open", p.display()))
 }
 
+/// A Raspberry Pi VM left running by an earlier Space Bench (one that quit or crashed without
+/// stopping it) holds its disk's lock, and QEMU then refuses the disk. Only one VM runs at a time,
+/// so any QEMU booted from the Linux folder is a stray.
+fn kill_strays() {
+  let pat = format!("qemu-system-aarch64.*{}", dir().display());
+  let strays = || Command::new("pgrep").args(["-f", &pat]).output().map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(String::from).collect::<Vec<_>>()).unwrap_or_default();
+  let pids = strays();
+  if pids.is_empty() { return }
+  let _ = Command::new("kill").arg("-9").args(&pids).status();
+  for _ in 0..30 { if strays().is_empty() { break } std::thread::sleep(std::time::Duration::from_millis(100)); }
+}
+
 pub fn start(o: StartOptions) -> Result<(), String> {
   stop();
+  kill_strays();
   let bin = find().ok_or("QEMU (qemu-system-aarch64) was not found — install it with `brew install qemu`")?;
   let tmp = std::env::temp_dir().join(format!("sb-linux-{}", std::process::id()));
   std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
@@ -183,6 +196,34 @@ pub fn send(console: Option<String>, agent: Option<String>) -> Result<(), String
   if let Some(t) = console { s.console.write_all(t.as_bytes()).map_err(|e| e.to_string())?; }
   if let Some(t) = agent { s.agent.write_all(t.as_bytes()).map_err(|e| e.to_string())?; }
   Ok(())
+}
+
+/// Homebrew packages Space Bench installs when the user agrees (the assistant asks first):
+/// QEMU for the Raspberry Pi boards, arduino-cli for compiling sketches.
+pub const BREW_PACKAGES: [&str; 2] = ["qemu", "arduino-cli"];
+
+pub fn brew_install(pkg: &str) -> Result<String, String> {
+  if !BREW_PACKAGES.contains(&pkg) { return Err(format!("{pkg} isn't a package Space Bench installs")) }
+  let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].iter().map(PathBuf::from).find(|p| p.exists())
+    .ok_or("Homebrew isn't installed: get it from https://brew.sh (it asks for your password), then try again")?;
+  let out = Command::new(&brew).args(["install", pkg]).env("HOMEBREW_NO_AUTO_UPDATE", "1").env("HOMEBREW_NO_ENV_HINTS", "1").output().map_err(|e| e.to_string())?;
+  let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+  let tail = text.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>();
+  let tail = tail[tail.len().saturating_sub(6)..].join("\n");
+  if out.status.success() { Ok(tail) } else { Err(format!("brew install {pkg} failed:\n{tail}")) }
+}
+
+/// Ask the guest agent to write everything to its disk, then stop: QEMU is ended, not shut down
+/// (the app quitting) — without this, packages just installed could be lost.
+pub fn sync_and_stop() {
+  // a co-simulation may have left it paused, and a paused guest can't write anything
+  let _ = qmp_cmd("cont");
+  if let Some(s) = SESSION.lock().unwrap().as_mut() {
+    let _ = s.agent.write_all(b"{\"op\":\"sync\"}\n");
+    let _ = s.agent.flush();
+  }
+  std::thread::sleep(std::time::Duration::from_millis(800));
+  stop();
 }
 
 pub fn stop() {

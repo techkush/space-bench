@@ -45,6 +45,7 @@ import { appFS, dirName, homeFolders, join as joinPath } from "@/lib/projectfs"
 import { MCU_EXAMPLES, blankSketch } from "@/mcu/examples"
 import { loadSketch, newSketch, saveSketch, sketchFolderOf } from "@/mcu/sketchfs"
 import { forgetSketch, rememberSketch, type RecentSketch } from "@/mcu/recent"
+import { boardByType, isBoardType } from "@/mcu/boards"
 import { moveToTrash, restoreFromTrash, type TrashItem } from "@/lib/trash"
 import type { SketchDoc } from "@/mcu/McuWorkspace"
 const McuWorkspace = lazy(() => import("@/mcu/McuWorkspace").then((m) => ({ default: m.McuWorkspace })))
@@ -1004,13 +1005,14 @@ export default function App() {
     try { const f = await newLibraryFile(project, name); refreshTree(); await openProjectFile(f) } catch (e) { toast.error(String(e instanceof Error ? e.message : e)) }
   }
   // ── microcontroller sketches ──
+  /** the sketch's (first) board by name, for the recent list: "Arduino Uno", "Raspberry Pi 5" */
+  const boardName = (d: SketchDoc) => { const t = d.diagram.parts.find((p) => isBoardType(p.type))?.type; return (t && boardByType(t)?.name) ?? "" }
   const openSketch = (doc: SketchDoc, folder: string | null, back: "start" | "work", standaloneRoot?: string) => {
     let where = folder
     // a sketch of the open project saves through it; anything else saves straight to its folder
     const inProject = project && !standaloneRoot ? project : null
     const remember = (root: string, f: string, d: SketchDoc, projectName?: string) => {
-      const b = d.diagram.parts.find((p) => p.type.startsWith("wokwi-arduino"))
-      rememberSketch({ path: joinPath(root, f), name: d.name, root, folder: f, project: projectName, board: b?.type.replace("wokwi-arduino-", "") ?? "", parts: d.diagram.parts.length, diagram: d.diagram })
+      rememberSketch({ path: joinPath(root, f), name: d.name, root, folder: f, project: projectName, board: boardName(d), parts: d.diagram.parts.length, diagram: d.diagram })
     }
     const save = async (d: SketchDoc) => {
       if (inProject) {
@@ -1055,8 +1057,7 @@ export default function App() {
     try {
       const root = dirName(path), folder = path.slice(root.length + 1)
       const d = await loadSketch({ fs: appFS(), root, manifest: {} as never }, folder)
-      const b = d.diagram.parts.find((p) => p.type.startsWith("wokwi-arduino"))
-      rememberSketch({ path, name: d.name, root, folder, board: b?.type.replace("wokwi-arduino-", "") ?? "", parts: d.diagram.parts.length, diagram: d.diagram })
+      rememberSketch({ path, name: d.name, root, folder, board: boardName(d), parts: d.diagram.parts.length, diagram: d.diagram })
     } catch { /* not a sketch folder */ }
   }
   const deleteSketch = (r: RecentSketch) => toTrash(r.path, "sketch", r.name, () => forgetSketch(r.path))

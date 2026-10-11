@@ -599,8 +599,13 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
         </div>
         )
       })()}
-      {badge && <div className="pointer-events-none absolute left-3 top-3 z-10">{badge}</div>}
-      {corner && !thumb && <div className="absolute right-3 top-3 z-10 flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>{corner}</div>}
+      {/* one row: on a narrow canvas the buttons wrap under the badge instead of covering it */}
+      {(badge || (corner && !thumb)) && (
+        <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-wrap items-start justify-between gap-1.5">
+          {badge ?? <span />}
+          {corner && !thumb && <div className="pointer-events-auto ml-auto flex flex-wrap items-center justify-end gap-1" onPointerDown={(e) => e.stopPropagation()}>{corner}</div>}
+        </div>
+      )}
       {wiring && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-md bg-popover px-2 py-1 text-xs shadow ring-1 ring-border">Click another pin to connect · Esc to cancel</div>}
 
       {!thumb && <div className="absolute bottom-3 right-3 z-10 flex items-center rounded-lg border bg-popover shadow-sm" onPointerDown={(e) => e.stopPropagation()}>

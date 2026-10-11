@@ -275,6 +275,21 @@ Two ways to connect (Settings → AI Assistant, or the chip in the panel header)
   Install: `npm install -g @anthropic-ai/claude-code`, then run `claude` once to log in.
 - **Anthropic API key** — calls the Messages API directly (`src/lib/ai/claude.ts`).
 
+### In the Microcontrollers workspace: it fixes what doesn't run
+The workspace's assistant (`src/mcu/agent.ts`) writes the sketch — or a Raspberry Pi's `main.py` — wires the canvas,
+compiles, runs and reads the Serial output. When something fails it finds the cause and fixes it:
+- **Fix with assistant** — on a failed run (the error toast), a compile error (Output / Problems) and a Raspberry Pi
+  program that crashed (a Python traceback). The assistant gets the error and starts on it.
+- **Missing tools** — `check_setup` lists what the project's boards need on this computer (arduino-cli and the board's
+  core, QEMU and the Raspberry Pi system, Renode, Espressif's QEMU; `src/mcu/setup.ts`); `install` installs one.
+- **On the Pi** — `pi_shell` runs a command on the board (diagnostics, `pip install`, `apt-get install`).
+- **It asks first.** Every install — and every Pi command that installs, removes or uses sudo — opens a dialog showing
+  exactly what will run: *Allow* or *Don't allow*. Read-only checks (`pip list`, `ls`) don't ask. Homebrew packages are
+  limited to `qemu` and `arduino-cli`.
+
+Packages installed on the Pi stay installed: the guest writes to its disk within half a second and is synced before
+the VM stops; a VM left behind by an earlier Space Bench (it held the disk's lock) is cleared on the next run.
+
 ## Next milestones
 1. **PCB next:** footprints from the KiCad footprint library, copper pours / ground planes, push-and-shove routing, 3D view.
 2. **Kirk next:** comment-preserving code patches, `component` definitions with drawn symbols, `for` generators, instruments as code.

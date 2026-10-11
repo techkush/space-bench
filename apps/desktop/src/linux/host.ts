@@ -43,4 +43,10 @@ export async function linuxPoll(): Promise<LinuxPoll> { if (isTauri()) return in
 export async function linuxSend(o: { console?: string; agent?: string }) { if (isTauri()) await invoke("linux_send", { console: o.console ?? null, agent: o.agent ?? null }); else await post("/api/linux/send", o) }
 /** "stop" pauses the VM (its clock too), "cont" resumes it */
 export async function linuxQmp(cmd: "stop" | "cont" | "system_powerdown") { if (isTauri()) await invoke("linux_qmp", { cmd }); else await post("/api/linux/qmp", { cmd }) }
+/** Install a Homebrew package (qemu, arduino-cli) — only after the user agreed. Returns brew's last lines. */
+export async function brewInstall(pkg: "qemu" | "arduino-cli"): Promise<string> {
+  if (isTauri()) return invoke<string>("brew_install", { pkg })
+  if (!devServer) throw new Error("Installing needs the desktop app")
+  return (await post<{ text: string }>("/api/linux/brew", { pkg })).text
+}
 export async function linuxStop() { if (isTauri()) await invoke("linux_stop").catch(() => {}); else if (devServer) await post("/api/linux/stop").catch(() => {}) }

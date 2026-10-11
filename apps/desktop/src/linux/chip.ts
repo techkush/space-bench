@@ -6,6 +6,7 @@ import type { Firmware } from "@/editor/model"
 import type { BoardDef } from "@/mcu/boards"
 import type { ChipLink, FrameOut, PinState } from "@/cosim/chip"
 import { linuxVm, type GuestFrame, type LinuxBoardId, type LinuxVm } from "./agent"
+import { piExec } from "./exec"
 
 const state = (out: number, pu: boolean, pd: boolean): PinState => ({ out: out === 1 ? 1 : out === 0 ? 0 : -1, pu, pd })
 
@@ -15,17 +16,17 @@ export const mainFile = (fw: Firmware) => (fw.files.find((f) => f.name === "main
 /** Boot the board (if it isn't already this one) and copy the program's files to /home/pi. */
 export async function prepareBoard(board: BoardDef, fw: Firmware, say: (text: string) => void): Promise<LinuxVm> {
   const vm = linuxVm()
-  const want = (board.linux ?? "pi5") as LinuxBoardId
-  if (!vm.running || vm.board !== want) {
-    if (vm.running) await vm.shutdown()
-    say(`Starting ${board.name} (Linux)…\n`)
-    await vm.boot(want)
-  } else {
-    await vm.resume()
-    await vm.kill()
-  }
+  await vm.ensure((board.linux ?? "pi5") as LinuxBoardId, () => say(`Starting ${board.name} (Linux)…\n`))
   for (const f of fw.files) await vm.put(`/home/pi/${f.name}`, f.content)
-  if (fw.files.find((f) => f.name === "requirements.txt")?.content.trim()) say("(requirements.txt: install packages from the Terminal with pip — they stay installed)\n")
+  // requirements.txt: name the packages that aren't installed yet (installing is the user's call)
+  const norm = (n: string) => n.toLowerCase().replace(/[-_.]+/g, "-")
+  const wants = (fw.files.find((f) => f.name === "requirements.txt")?.content ?? "").split("\n").map((l) => l.replace(/#.*/, "").trim().split(/[<>=!~[;\s]/)[0]).filter(Boolean)
+  if (wants.length) {
+    const shown = await piExec(vm.board, `python3 -m pip show ${wants.map((w) => `'${w.replace(/'/g, "")}'`).join(" ")} 2>/dev/null | grep '^Name:'`, 30).catch(() => null)
+    const have = new Set([...(shown?.output ?? "").matchAll(/^Name:\s*(\S+)/gm)].map((m) => norm(m[1])))
+    const missing = wants.filter((w) => !have.has(norm(w)))
+    if (missing.length) say(`(requirements.txt: ${missing.join(", ")} not installed — install with pip in the Terminal, or ask the assistant)\n`)
+  }
   return vm
 }
 

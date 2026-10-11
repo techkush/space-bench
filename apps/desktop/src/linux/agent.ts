@@ -65,6 +65,20 @@ export class LinuxVm {
     if (hello.version !== AGENT_VERSION) throw new Error(`The Linux board's agent didn't update (it reports version ${String(hello.version)}, this app has ${AGENT_VERSION})`)
   }
 
+  /**
+   * Ready to run a program as `board`: the running VM (resumed, its program stopped), or a fresh
+   * boot — also when the VM died without this side noticing yet. Returns true when it booted.
+   */
+  async ensure(board: LinuxBoardId, onBoot?: () => void): Promise<boolean> {
+    if (this.alive && this.board === board) {
+      try { await this.resume(); await this.kill(); return false } catch { this.alive = false }
+    }
+    if (this.alive) await this.shutdown()
+    onBoot?.()
+    await this.boot(board)
+    return true
+  }
+
   /** Follow a VM started elsewhere (the setup boots its own). */
   attach() { this.alive = true; this.inbox = []; this.pump() }
 
@@ -148,7 +162,12 @@ export class LinuxVm {
   /** Let the VM run freely (after a co-simulation). */
   resume() { return linuxQmp("cont").catch(() => {}) }
 
+  /** Everything written in the guest goes to its disk (before QEMU is ended). */
+  async sync(timeoutMs = 5000) { if (this.alive) await this.request({ op: "sync" }, "sync", timeoutMs).catch(() => {}) }
+
   async shutdown() {
+    // QEMU is ended, not shut down: flush the guest's files first (a paused VM can't)
+    if (this.alive) { await linuxQmp("cont").catch(() => {}); await this.sync() }
     this.alive = false
     if (this.timer) clearTimeout(this.timer)
     await linuxStop()

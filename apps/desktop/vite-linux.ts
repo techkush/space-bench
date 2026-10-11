@@ -70,8 +70,18 @@ const connect = (p: string) => new Promise<net.Socket>((ok, fail) => {
   go()
 })
 
+/** A VM left running by an earlier Space Bench (it quit without stopping it) holds the disk's lock: kill any QEMU booted from the Linux folder. */
+function killStrays() {
+  const strays = () => { try { return execFileSync("pgrep", ["-f", `qemu-system-aarch64.*${LINUX_DIR}`], { encoding: "utf8" }).split(/\s+/).filter(Boolean) } catch { return [] } }
+  const pids = strays()
+  if (!pids.length) return
+  try { execFileSync("kill", ["-9", ...pids]) } catch { /* gone */ }
+  for (let i = 0; i < 30 && strays().length; i++) execFileSync("sleep", ["0.1"])
+}
+
 async function start(o: StartOptions) {
   stop()
+  killStrays()
   const bin = findQemu()
   if (!bin) throw new Error("QEMU (qemu-system-aarch64) was not found — install it with `brew install qemu`")
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-linux-"))
@@ -178,6 +188,19 @@ export function linuxDev(): Plugin {
               send(200, {}); return
             }
             if (url.startsWith("/qmp")) { send(200, await qmp(j.cmd)); return }
+            // Homebrew packages Space Bench installs when the user agrees (the assistant asks first)
+            if (url.startsWith("/brew")) {
+              if (!["qemu", "arduino-cli"].includes(j.pkg)) throw new Error(`${j.pkg} isn't a package Space Bench installs`)
+              const brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].find((p) => fs.existsSync(p))
+              if (!brew) throw new Error("Homebrew isn't installed: get it from https://brew.sh (it asks for your password), then try again")
+              const text = await new Promise<string>((ok, fail) => {
+                let out = ""
+                const p = spawn(brew, ["install", j.pkg], { env: { ...process.env, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_ENV_HINTS: "1" } })
+                p.stdout.on("data", (d) => (out += d)); p.stderr.on("data", (d) => (out += d))
+                p.on("exit", (c) => { const tail = out.split("\n").filter((l) => l.trim()).slice(-6).join("\n"); if (c === 0) ok(tail); else fail(new Error(`brew install ${j.pkg} failed:\n${tail}`)) })
+              })
+              send(200, { text }); return
+            }
             if (url.startsWith("/fetch")) {
               fs.mkdirSync(LINUX_DIR, { recursive: true })
               const dest = safe(j.name)
