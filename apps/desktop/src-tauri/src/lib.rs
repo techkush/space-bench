@@ -1,0 +1,138 @@
+mod arduino;
+mod esp32;
+mod claude_code;
+mod ngspice;
+mod ngspice_lib;
+
+/// Run a simulation job (JSON in, JSON out) on the Space Bench Engine.
+/// Runs on a blocking worker thread so the UI never freezes.
+#[tauri::command]
+async fn simulate(job: String) -> Result<String, String> {
+  tauri::async_runtime::spawn_blocking(move || sb_engine::api::run_json(&job).map_err(|e| e.to_string()))
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Run a SPICE netlist on ngspice. `engine`: "library" (libngspice, see ngspice_lib.rs),
+/// "program" (`ngspice -b`, see ngspice.rs) or "auto" (library when it loads, else program).
+/// `run` names the run for progress events and Stop; `live` marks a Live re-run.
+#[tauri::command]
+async fn ngspice_run(app: tauri::AppHandle, netlist: String, bin: Option<String>, engine: Option<String>, run: Option<String>, live: Option<bool>) -> Result<String, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let engine = engine.as_deref().unwrap_or("auto");
+    let lib = if engine == "program" { Err(String::new()) } else { ngspice_lib::available(bin.as_deref()) };
+    match lib {
+      Ok(_) => ngspice_lib::run(&netlist, bin.as_deref(), Some(app), run, live.unwrap_or(false)),
+      Err(e) if engine == "library" => Err(format!("{e}. Install ngspice's shared library or switch Settings → Simulation Engine to “Program”.")),
+      Err(_) => ngspice::run(&netlist, bin.as_deref()),
+    }
+  }).await.map_err(|e| e.to_string())?
+}
+
+/// Stop a library run (`run`), or the current Live run when `run` is empty.
+#[tauri::command]
+fn ngspice_halt(run: Option<String>, bin: Option<String>) -> bool {
+  ngspice_lib::halt(run.as_deref(), bin.as_deref())
+}
+
+/// Change a part of the running circuit and carry on (e.g. `r1 resistance=2k`).
+#[tauri::command]
+async fn ngspice_alter(command: String, bin: Option<String>) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || ngspice_lib::alter(&command, bin.as_deref())).await.map_err(|e| e.to_string())?
+}
+
+/// The libngspice that would be used, or why there is none (for Settings).
+#[tauri::command]
+async fn ngspice_lib_path(bin: Option<String>) -> Result<String, String> {
+  tauri::async_runtime::spawn_blocking(move || ngspice_lib::available(bin.as_deref())).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn ngspice_version(bin: Option<String>) -> Result<String, String> {
+  ngspice::version(bin.as_deref())
+}
+
+/// The ngspice executable that would be used (for Settings).
+#[tauri::command]
+fn ngspice_path(bin: Option<String>) -> Option<String> {
+  ngspice::find_ngspice(bin.as_deref()).map(|p| p.display().to_string())
+}
+
+/// AI assistant through the Claude Code CLI (the user's own `claude` login).
+#[tauri::command]
+async fn claude_code_run(app: tauri::AppHandle, run: String, args: Vec<String>, stdin: String, bin: Option<String>) -> Result<serde_json::Value, String> {
+  tauri::async_runtime::spawn_blocking(move || claude_code::run(app, run, args, stdin, bin)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn claude_code_cancel(run: String) -> bool {
+  claude_code::cancel(&run)
+}
+
+#[tauri::command]
+async fn claude_code_version(bin: Option<String>) -> Result<String, String> {
+  tauri::async_runtime::spawn_blocking(move || claude_code::version(bin.as_deref())).await.map_err(|e| e.to_string())?
+}
+
+/// Arduino: compile a sketch with arduino-cli (returns the Intel HEX and the compiler output).
+#[tauri::command]
+async fn arduino_compile(files: Vec<arduino::SketchFile>, fqbn: String, libraries: Vec<String>, props: Option<Vec<String>>, bin: Option<String>) -> Result<arduino::CompileResult, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    arduino::install_libraries(&libraries, bin.as_deref())?;
+    arduino::compile(files, &fqbn, &props.unwrap_or_default(), bin.as_deref())
+  }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn arduino_status(bin: Option<String>) -> Result<serde_json::Value, String> {
+  tauri::async_runtime::spawn_blocking(move || arduino::status(bin.as_deref())).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn arduino_install_core(core: String, url: Option<String>, bin: Option<String>) -> Result<String, String> {
+  tauri::async_runtime::spawn_blocking(move || arduino::install_core(&core, url.as_deref(), bin.as_deref())).await.map_err(|e| e.to_string())?
+}
+
+/// ESP32 on Espressif's QEMU (see esp32.rs).
+#[tauri::command]
+async fn esp32_status(bin: Option<String>) -> Result<String, String> { tauri::async_runtime::spawn_blocking(move || esp32::status(bin.as_deref())).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+async fn esp32_install() -> Result<String, String> { tauri::async_runtime::spawn_blocking(esp32::install).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+async fn esp32_start(image: String, bin: Option<String>) -> Result<(), String> { tauri::async_runtime::spawn_blocking(move || esp32::start(&image, bin.as_deref())).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+fn esp32_poll() -> esp32::Poll { esp32::poll() }
+#[tauri::command]
+fn esp32_send(serial: Option<String>, bridge: Option<Vec<u8>>) -> Result<(), String> { esp32::send(serial, bridge) }
+#[tauri::command]
+fn esp32_stop() { esp32::stop() }
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+  tauri::Builder::default()
+    .plugin(tauri_plugin_fs::init())
+    .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_dialog::init())
+    .setup(|app| {
+      use tauri::Manager;
+      // Open on the primary display, in front (macOS can otherwise pick another screen).
+      if let Some(w) = app.get_webview_window("main") {
+        if let Ok(Some(m)) = w.primary_monitor() {
+          let _ = w.set_position(*m.position());
+        }
+        let _ = w.maximize();
+        let _ = w.set_focus();
+      }
+      if cfg!(debug_assertions) {
+        app.handle().plugin(
+          tauri_plugin_log::Builder::default()
+            .level(log::LevelFilter::Info)
+            .build(),
+        )?;
+      }
+      Ok(())
+    })
+    .invoke_handler(tauri::generate_handler![simulate, ngspice_run, ngspice_halt, ngspice_alter, ngspice_lib_path, ngspice_version, ngspice_path, claude_code_run, claude_code_cancel, claude_code_version, arduino_compile, arduino_status, arduino_install_core, esp32_status, esp32_install, esp32_start, esp32_poll, esp32_send, esp32_stop])
+    .run(tauri::generate_context!())
+    .expect("error while building tauri application");
+}
