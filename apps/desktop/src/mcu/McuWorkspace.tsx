@@ -209,7 +209,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
     const espId = esps[0]?.id
     if (espId) {
       // the firmware runs in QEMU; the worker solves the circuit from the bridge's pin reports
-      try { await espStart(fws[espId] as string, s.esp32QemuPath) } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); setBottom("output"); return }
+      try { await espStart(fws[espId] as string, s.esp32QemuPath, boardByType(esps[0].type)?.esp ?? "esp32") } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); setBottom("output"); return }
     }
     setSerials({})
     logic.current.reset()

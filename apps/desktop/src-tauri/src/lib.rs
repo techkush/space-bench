@@ -101,7 +101,7 @@ async fn esp32_status(bin: Option<String>) -> Result<String, String> { tauri::as
 #[tauri::command]
 async fn esp32_install() -> Result<String, String> { tauri::async_runtime::spawn_blocking(esp32::install).await.map_err(|e| e.to_string())? }
 #[tauri::command]
-async fn esp32_start(image: String, bin: Option<String>) -> Result<(), String> { tauri::async_runtime::spawn_blocking(move || esp32::start(&image, bin.as_deref())).await.map_err(|e| e.to_string())? }
+async fn esp32_start(image: String, bin: Option<String>, machine: Option<String>) -> Result<(), String> { tauri::async_runtime::spawn_blocking(move || esp32::start(&image, bin.as_deref(), machine.as_deref().unwrap_or("esp32"))).await.map_err(|e| e.to_string())? }
 #[tauri::command]
 fn esp32_poll() -> esp32::Poll { esp32::poll() }
 #[tauri::command]

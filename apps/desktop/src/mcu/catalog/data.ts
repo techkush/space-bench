@@ -123,9 +123,11 @@ add("Boards", "Seeed XIAO", "XIAO RP2040", { k: "board", color: "#2b2b2b", chip:
 // boards drawn for diagrams; no emulator yet
 const pi = (t: string, chip: string) => brd(t, { k: "board", color: "#2b8a3e", chip, w: 230, h: 150 }, piPins, { sub: "Raspberry Pi", noEmu: LINUX })
 pi("Raspberry Pi Zero", "BCM2835"); pi("Raspberry Pi 1B+", "BCM2835"); pi("Raspberry Pi 2B", "BCM2836"); pi("Raspberry Pi 3B", "BCM2837"); pi("Raspberry Pi 4B", "BCM2711"); pi("Raspberry Pi 5", "BCM2712")
-const espNo = "ESP32-S3/C3/C6/C5/P4 need their own QEMU builds and pin bridge — drawn for wiring; not emulated yet."
+const espNo = "ESP32-C6/C5/P4 (and these S3/C3 boards' own pinouts) aren't emulated yet — Espressif's QEMU runs the ESP32, ESP32-S3 and ESP32-C3; use the S3 / C3 DevKit to run a sketch."
 const esp = (t: string, chip: string, n = 14) => brd(t, { k: "board", color: "#1c1c1c", chip, usb: true }, [...hdr("IO", n), "3V3", "5V", "GND"], { sub: "ESP32", noEmu: espNo })
-esp("ESP32-S3 DevKit", "ESP32-S3"); esp("XIAO ESP32-S3", "ESP32-S3", 11); esp("Arduino Nano ESP32", "ESP32-S3"); esp("ESP32-C3 DevKit", "ESP32-C3"); esp("XIAO ESP32-C3", "ESP32-C3", 11)
+add("Boards", "ESP32", "ESP32-S3 DevKitC-1", { k: "board", color: "#1c1c1c", chip: "ESP32-S3", usb: true }, boardByType("sb-esp32-s3-devkitc-1")?.header ?? [], none(), { type: "sb-esp32-s3-devkitc-1", board: true, hint: "ESP32-S3 on Espressif's QEMU (qemu-system-xtensa -M esp32s3): GPIO, analogRead, PWM; Serial on UART0." })
+add("Boards", "ESP32", "ESP32-C3 DevKitM-1", { k: "board", color: "#1c1c1c", chip: "ESP32-C3", usb: true }, boardByType("sb-esp32-c3-devkitm-1")?.header ?? [], none(), { type: "sb-esp32-c3-devkitm-1", board: true, hint: "ESP32-C3 (RISC-V) on Espressif's QEMU (qemu-system-riscv32 -M esp32c3): GPIO, analogRead, PWM; Serial on UART0." })
+esp("XIAO ESP32-S3", "ESP32-S3", 11); esp("Arduino Nano ESP32", "ESP32-S3"); esp("XIAO ESP32-C3", "ESP32-C3", 11)
 esp("ESP32-C3 SuperMini", "ESP32-C3", 11); esp("ESP32-C6", "ESP32-C6"); esp("XIAO ESP32S3 Sense", "ESP32-S3", 11); esp("XIAO ESP32C6", "ESP32-C6", 11); esp("ESP32-C3-LCDkit", "ESP32-C3")
 esp("ESP32-S3-EYE", "ESP32-S3"); esp("ESP-VoCat", "ESP32-S3"); esp("ESP-SensAirShuttle", "ESP32-C6"); esp("ESP32-P4-Function-EV", "ESP32-P4"); esp("ESP32-P4 Preview", "ESP32-P4")
 esp("Beetle ESP32-C3", "ESP32-C3", 8); esp("FireBeetle 2 ESP32-E", "ESP32-E"); esp("FireBeetle 2 ESP32-C6", "ESP32-C6"); esp("Beetle ESP32-C6", "ESP32-C6", 8); esp("FireBeetle 2 ESP32-S3", "ESP32-S3")

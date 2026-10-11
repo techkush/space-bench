@@ -41,6 +41,8 @@ export interface BoardDef {
   header?: string[]
   /** another maker's board on the same chip (the id of the board it's built like) */
   variantOf?: string
+  /** ESP32 family member QEMU runs (-M …); absent = the classic ESP32 */
+  esp?: "esp32s3" | "esp32c3"
   /** Linux boards: the Raspberry Pi model the VM identifies as (linux-guest/spacebench-identity) */
   linux?: "pi5" | "pi4" | "pi3" | "zero2w"
   /** Renode boards (src/renode/): the platform, its GPIO ports (register family + base) and the Serial UART */
@@ -231,6 +233,26 @@ BOARDS.push(
   }),
 )
 export const isRenodeBoard = (b: Pick<BoardDef, "chip"> | undefined | null) => b?.chip === "renode"
+
+// ── ESP32-S3 / ESP32-C3 on Espressif's QEMU (the bridge reports pins over UART1) ──
+const espGpio = (gpios: number[], adc: number[]) => { const a = new Set(adc); return Object.fromEntries(gpios.map((g) => [String(g), a.has(g) ? { bit: g, adc: g } : { bit: g }])) as Record<string, BoardPin> }
+const S3_GPIO = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48]
+const C3_GPIO = Array.from({ length: 22 }, (_, i) => i)
+const ESP_WRAP = "compiler.c.elf.extra_flags=-Wl,--wrap=ledc_channel_config,--wrap=ledc_timer_config,--wrap=ledc_set_duty"
+BOARDS.push(
+  {
+    id: "esp32s3", type: "sb-esp32-s3-devkitc-1", name: "ESP32-S3 DevKitC-1", chip: "esp32", esp: "esp32s3", fqbn: "esp32:esp32:esp32s3:CDCOnBoot=default,PSRAM=disabled,FlashMode=dio",
+    vcc: 3.3, power: { "3V3": 3.3, "5V": 5 }, firmware: "image", coreUrl: "https://espressif.github.io/arduino-esp32/package_esp32_index.json", buildProps: [ESP_WRAP],
+    flash: 0x800000, sram: 0x80000, hz: 240e6, pins: espGpio(S3_GPIO, Array.from({ length: 20 }, (_, i) => i + 1)), alias: {}, led: "48", size: { w: 230, h: 110 },
+    header: ["3V3", ...S3_GPIO.filter((g) => g < 22 || g > 34).map(String), "5V", "GND"],
+  },
+  {
+    id: "esp32c3", type: "sb-esp32-c3-devkitm-1", name: "ESP32-C3 DevKitM-1", chip: "esp32", esp: "esp32c3", fqbn: "esp32:esp32:esp32c3:CDCOnBoot=default,FlashMode=dio",
+    vcc: 3.3, power: { "3V3": 3.3, "5V": 5 }, firmware: "image", coreUrl: "https://espressif.github.io/arduino-esp32/package_esp32_index.json", buildProps: [ESP_WRAP],
+    flash: 0x400000, sram: 0x60000, hz: 160e6, pins: espGpio(C3_GPIO, [0, 1, 2, 3, 4]), alias: {}, led: "8", size: { w: 200, h: 100 },
+    header: ["3V3", ...C3_GPIO.map(String), "5V", "GND"],
+  },
+)
 
 // ── ATtiny85 (ATTinyCore, 8 MHz internal) on avr8js: port B; ADC0–3 = PB5, PB2, PB4, PB3 ──
 BOARDS.push({

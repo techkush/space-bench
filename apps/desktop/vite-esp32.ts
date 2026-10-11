@@ -10,14 +10,19 @@ import os from "node:os"
 import path from "node:path"
 import type { Plugin } from "vite"
 
-function findQemu(): string | null {
+/** Espressif's QEMU: qemu-system-xtensa (ESP32, ESP32-S3) or qemu-system-riscv32 (ESP32-C3) */
+function findQemu(arch: "xtensa" | "riscv32" = "xtensa"): string | null {
   const dirs = [...(process.env.PATH ?? "").split(path.delimiter), "/opt/homebrew/bin", "/usr/local/bin"]
-  for (const root of [path.join(os.homedir(), ".espressif/tools/qemu-xtensa"), path.join(os.homedir(), "Library/Application Support/Space Bench/qemu-xtensa")]) {
+  for (const root of [path.join(os.homedir(), `.espressif/tools/qemu-${arch}`), path.join(os.homedir(), `Library/Application Support/Space Bench/qemu-${arch}`)]) {
     try { for (const v of fs.readdirSync(root).sort().reverse()) dirs.push(path.join(root, v, "qemu/bin")) } catch { /* none */ }
   }
-  for (const d of dirs) { const p = path.join(d, "qemu-system-xtensa"); try { fs.accessSync(p, fs.constants.X_OK); return p } catch { /* next */ } }
+  for (const d of dirs) { const p = path.join(d, `qemu-system-${arch}`); try { fs.accessSync(p, fs.constants.X_OK); return p } catch { /* next */ } }
   return null
 }
+/** the machine's arguments: ESP32 has the bridge on UART2, the S3 / C3 on UART1; the C3 needs -icount */
+const machineArgs = (machine: string, bridge: string) => machine === "esp32"
+  ? ["-machine", "esp32", "-m", "4M", "-serial", "stdio", "-serial", "null", "-serial", bridge]
+  : ["-machine", machine, ...(machine === "esp32c3" ? ["-icount", "3"] : []), "-serial", "stdio", "-serial", bridge]
 
 let session: { child: ChildProcess; sock: net.Socket | null; serial: string; bridge: number[]; log: string; running: boolean } | null = null
 const stop = () => { if (session) { session.child.kill("SIGKILL"); session.sock?.destroy(); session = null } } // QEMU ignores SIGTERM while its stdio is blocked
@@ -60,7 +65,10 @@ export function esp32Dev(): Plugin {
             const dir = path.join(os.tmpdir(), "spacebench-esp32"); fs.mkdirSync(dir, { recursive: true })
             const flash = path.join(dir, "flash-dev.bin"); fs.copyFileSync(j.image, flash)
             const port = await freePort()
-            const child = spawn(bin, ["-nographic", "-machine", "esp32", "-m", "4M", "-monitor", "none", "-nic", "none", "-drive", `file=${flash},if=mtd,format=raw`, "-serial", "stdio", "-serial", "null", "-serial", `tcp:127.0.0.1:${port},server=on,wait=off`])
+            const machine = String(j.machine ?? "esp32")
+            const qemu = machine === "esp32c3" ? findQemu("riscv32") : bin
+            if (!qemu) { send(404, { error: "Espressif's QEMU for RISC-V (qemu-system-riscv32) was not found — install it from Settings → Microcontrollers" }); return }
+            const child = spawn(qemu, ["-nographic", "-monitor", "none", "-nic", "none", "-drive", `file=${flash},if=mtd,format=raw`, ...machineArgs(machine, `tcp:127.0.0.1:${port},server=on,wait=off`)])
             const s = { child, sock: null as net.Socket | null, serial: "", bridge: [] as number[], log: "", running: true }
             session = s
             child.stdout.on("data", (d) => (s.serial += d.toString("latin1")))
