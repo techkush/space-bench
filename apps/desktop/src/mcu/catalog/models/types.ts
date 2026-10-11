@@ -23,4 +23,7 @@ export interface PartPatch {
   look?: Look
   pins?: string[]
   hint?: string
+  /** default attributes (merged over the entry's) and the Settings fields that edit them */
+  attrs?: Record<string, string>
+  settings?: CatalogPart["settings"]
 }

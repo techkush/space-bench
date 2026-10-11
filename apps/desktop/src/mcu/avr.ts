@@ -146,8 +146,10 @@ export class AvrMachine implements Machine {
   constructor(board: BoardDef, hex: string, eepromBytes?: Uint8Array) {
     this.board = board
     const prog = parseHex(hex, board.flash)
-    this.cpu = new CPU(new Uint16Array(prog.buffer), board.sram)
     const mega = board.chip === "atmega2560"
+    // avr8js puts SRAM after 0x100 bytes of registers; the ATmega2560's extended I/O runs to 0x1FF,
+    // so its SRAM (and the stack at RAMEND 0x21FF) starts 0x100 higher
+    this.cpu = new CPU(new Uint16Array(prog.buffer), board.sram + (mega ? 0x100 : 0))
     const tiny = board.chip === "attiny85"
     const usedPorts = new Set(Object.values(board.pins).filter((p) => p.bit >= 0 && p.port).map((p) => p.port!))
     for (const name of usedPorts) {
@@ -171,6 +173,16 @@ export class AvrMachine implements Machine {
       for (const cfg of mega ? MEGA_TIMERS : [timer0Config, timer1Config, timer2Config]) this.timers.push(new AVRTimer(this.cpu, cfg))
       this.usart = new AVRUSART(this.cpu, mega ? { ...usart0Config, rxCompleteInterrupt: v(26), dataRegisterEmptyInterrupt: v(27), txCompleteInterrupt: v(28) } : usart0Config, board.hz)
       this.usart.onByteTransmit = (b) => { this.serialBuf += String.fromCharCode(b); this.onUartTx?.(0, b) }
+      // UCSR0A's RXC and UDRE are read-only and TXC clears only when written 1, but avr8js's write
+      // hook wipes them: a second Serial.begin() (it writes UCSR0A while TXEN is already on) left
+      // UDRE clear forever and Serial silent. Keep them across the write.
+      const ucsra = usart0Config.UCSRA, writeA = this.cpu.writeHooks[ucsra]
+      this.cpu.writeHooks[ucsra] = (value, old, addr, mask) => {
+        const keep = this.cpu.data[ucsra] & (0x80 | 0x20 | (value & 0x40 ? 0 : 0x40))
+        const r = writeA(value, old, addr, mask)
+        this.cpu.data[ucsra] |= keep
+        return r
+      }
       this.adc = new AVRADC(this.cpu, mega ? { ...adcConfig, adcInterrupt: v(30), numChannels: 16, muxChannels: megaChannels } : adcConfig)
       this.twi = new AVRTWI(this.cpu, mega ? { ...twiConfig, twiInterrupt: v(40) } : twiConfig, board.hz)
       this.spi = new AVRSPI(this.cpu, mega ? { ...spiConfig, spiInterrupt: v(25) } : spiConfig, board.hz)

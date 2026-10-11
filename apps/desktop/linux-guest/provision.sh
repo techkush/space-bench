@@ -45,7 +45,8 @@ modprobe gpio-sim || fail "gpio-sim did not load"
 apt-mark hold linux-image-arm64 "linux-image-$KV" linux-headers-arm64 "linux-headers-$KV" >/dev/null
 
 step 6 "Installing the Space Bench agent and services"
-install -m 755 "$SRC/spacebench-agent" "$SRC/spacebench-identity" "$SRC/spacebench-gpio-setup" /usr/local/sbin/
+# (the camera / microphone feeders and their add-on installer are used only when a project asks)
+install -m 755 "$SRC/spacebench-agent" "$SRC/spacebench-identity" "$SRC/spacebench-gpio-setup" "$SRC/spacebench-camera" "$SRC/spacebench-mic" "$SRC/spacebench-media-setup" /usr/local/sbin/
 install -m 644 "$SRC/spacebench-identity.service" "$SRC/spacebench-gpio.service" "$SRC/spacebench-agent.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable spacebench-identity.service spacebench-gpio.service spacebench-agent.service >/dev/null 2>&1
@@ -54,7 +55,7 @@ step 7 "Creating the pi user"
 groupadd -f gpio; groupadd -f i2c; groupadd -f spi
 # like Raspberry Pi OS: the gpio group may use the GPIO chips
 echo 'SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"' > /etc/udev/rules.d/60-spacebench-gpio.rules
-id pi >/dev/null 2>&1 || useradd -m -s /bin/bash -G gpio,i2c,spi,dialout,sudo,video pi
+id pi >/dev/null 2>&1 || useradd -m -s /bin/bash -G gpio,i2c,spi,dialout,sudo,video,audio pi
 passwd -d pi >/dev/null
 echo "pi ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/010_pi-nopasswd && chmod 440 /etc/sudoers.d/010_pi-nopasswd
 hostnamectl set-hostname raspberrypi 2>/dev/null || echo raspberrypi > /etc/hostname

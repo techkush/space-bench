@@ -191,6 +191,38 @@ class OneWire {
   }
 }
 
+// ── I²C address probes the controller bit-bangs ─────────────────────────────────────────────
+/**
+ * Answer a bit-banged address probe (used for every I²C part on the Pico — sim.ts) with an ACK on SDA: arduino-pico's Wire sends a zero-length
+ * write (Adafruit_I2CDevice::detected, a bus scan) by toggling the pins itself, not through the
+ * I²C block, so the bus model never sees it.
+ */
+export function i2cProbeAck(ctx: SimCtx, addrs: number[], powered: () => boolean = () => true) {
+  const scl = ctx.pin("SCL"), sda = ctx.pin("SDA")
+  if (!scl || !sda) return
+  let bits = -1, byte = 0, acking = false, sclHigh = true, sdaHigh = true
+  const high = (pin: string) => ctx.level(pin) !== false
+  const release = () => { if (acking) { acking = false; ctx.drive("SDA", null) } }
+  ctx.hook(sda, () => {
+    const h = high("SDA")
+    if (h === sdaHigh) return
+    sdaHigh = h
+    if (!sclHigh || acking) return
+    if (!h) { bits = 0; byte = 0 } else { bits = -1; release() } // START / STOP
+  })
+  ctx.hook(scl, () => {
+    const h = high("SCL")
+    if (h === sclHigh) return
+    sclHigh = h
+    if (bits < 0) return
+    if (h && bits < 8) { byte = (byte << 1) | (high("SDA") ? 1 : 0); bits++ }
+    else if (h && bits === 8) bits = 9
+    else if (!h && bits === 8 && !acking) { if (addrs.includes(byte >> 1) && powered()) { acking = true; ctx.drive("SDA", { v: 0, r: 50 }) } else bits = -1 }
+    else if (!h && bits === 9) { release(); bits = -1 }
+  })
+}
+
+
 // ── UART (device side) ────────────────────────────────────────────────────────────────────
 export function uartSend(ctx: SimCtx, tx: string, bytes: number[], baud = 9600) {
   const rx = ctx.pin(tx)

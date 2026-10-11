@@ -269,6 +269,8 @@ export const isBoardType = (type: string) => BOARDS.some((b) => b.type === type)
 /** "GND.2" → "GND", "A4.2" → "A4" (through the board's aliases). */
 export function canonicalPin(board: BoardDef | undefined, pin: string): string {
   if (board?.alias[pin]) return board.alias[pin]
+  // a voltage ("3.3V", "1.8V") is a name, not a pin with a ".n" suffix
+  if (/^\d+\.\d/.test(pin)) return pin
   const dot = pin.indexOf(".")
   return dot > 0 ? pin.slice(0, dot) : pin
 }

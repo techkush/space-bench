@@ -33,6 +33,8 @@ export interface ChipLink {
   frame(f: FrameIn): Promise<FrameOut>
   serialWrite(text: string): void
   dispose(): void
+  /** a part's control changed on the canvas (Linux boards: the camera / microphone feeders) */
+  ui?(part: string, u: { v?: Record<string, number> }): void
 }
 
 export class ChipRunner {

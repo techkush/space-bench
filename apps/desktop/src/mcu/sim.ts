@@ -14,7 +14,7 @@ import { Circuit, type Drive, type PartUi, type PinLevel, type Solution } from "
 import { HD44780, I2CBus, LcdI2C, NeoPixelDecoder, SSD1306 } from "./devices"
 import { splitEnd, type Diagram, type DiagramPart } from "./diagram"
 import { catalogPart, controlsOf, type CatalogPart } from "./catalog"
-import { makeDevice, uartListen, uartSend, type CatDevice, type SimCtx, type SpiDevice, type UartPort } from "./catalog/devices"
+import { i2cProbeAck, makeDevice, moduleVcc, uartListen, uartSend, type CatDevice, type SimCtx, type SpiDevice, type UartPort } from "./catalog/devices"
 import { makeChip, type Chip } from "./catalog/i2c"
 import type { ModView } from "./catalog/look"
 
@@ -233,7 +233,7 @@ export class McuSim {
       drive: (pin, d) => this.drive(key(pin), d),
       set: (pin, d) => { if (d) this.drives.set(key(pin), d); else this.drives.delete(key(pin)) },
       after: (s, fn) => m.schedule(fn, Math.max(1, Math.round(s * m.hz))),
-      i2c: (addr, dev) => this.bus.devices.set(addr, dev),
+      i2c: (addr, dev) => { this.bus.devices.set(addr, dev); this.probes(self, c, [addr]) },
       ctl: (k) => {
         const u = this.ui[p.id]
         const v = u?.v?.[k] ?? (k === "value" ? u?.value : undefined)
@@ -254,6 +254,16 @@ export class McuSim {
     return self
   }
 
+  /**
+   * arduino-pico's Wire sends address probes (a zero-length write: Adafruit_I2CDevice::begin, bus
+   * scans) by toggling the pins itself, not through the I²C block the bus model listens to: ACK them.
+   */
+  private probes(ctx: SimCtx, c: CatalogPart, addrs: number[]) {
+    if (this.board.chip !== "rp2040" || !addrs.length) return
+    const hasPower = ["VCC", "VDD", "VIN", "5V", "3V3", "+"].some((p) => c.pins.includes(p))
+    i2cProbeAck(ctx, addrs, () => !hasPower || moduleVcc(c, ctx) > 0)
+  }
+
   // ── SPI: hardware transfers go to the devices whose CS is low; bit-banged clocks are decoded ──
   private addSpi(p: DiagramPart, c: CatalogPart, dev: SpiDevice, pins: { cs?: string; sck?: string; mosi?: string; miso?: string } = {}) {
     const csPin = pins.cs ?? pickPin(c.pins, ["CS", "SS", "NSS", "CSN", "TFT_CS", "LCD_CS", "CE"]) ?? "CS"
@@ -266,11 +276,13 @@ export class McuSim {
     const misoKey = `${p.id}:${misoPin}`
     // chip select (a part with its CS not wired is always selected)
     let selected = !cs, bits = 0, inByte = 0, outByte = 0xff
+    /** the MISO level driven now (-1 released): re-driven only when it changes, so write-only bit-banged streams don't re-solve per bit */
+    let misoBit = -1
     if (cs) this.hook(cs, () => {
       // selected only while CS is driven low (an undriven pin at reset isn't a select)
       const low = this.machine.track.get(cs)?.out === false
       if (low && !selected) { selected = true; bits = 0; inByte = 0; dev.select?.() }
-      else if (!low && selected) { selected = false; dev.deselect?.(); this.drive(misoKey, null) }
+      else if (!low && selected) { selected = false; dev.deselect?.(); misoBit = -1; this.drive(misoKey, null) }
     })
     // bit-banged clocks: the controller reads MISO and has set MOSI by the sampling edge
     const mode = dev.mode ?? 0, sampleOnRise = ((mode >> 1) ^ (mode & 1)) === 0
@@ -278,7 +290,8 @@ export class McuSim {
       if (!selected || high !== sampleOnRise) return
       const k = dev.lsbFirst ? bits : 7 - bits
       if (bits === 0) outByte = dev.out() & 0xff
-      this.drive(misoKey, { v: (outByte >> k) & 1 ? this.board.vcc : 0, r: 100 })
+      const bit = (outByte >> k) & 1
+      if (bit !== misoBit) { misoBit = bit; this.drive(misoKey, { v: bit ? this.board.vcc : 0, r: 100 }) }
       if (this.level(mosi)) inByte |= 1 << k
       if (++bits === 8) { dev.in(inByte); bits = 0; inByte = 0 }
     })
@@ -323,6 +336,7 @@ export class McuSim {
       const chip = makeChip(c.model.chip, Number(p.attrs.i2cAddress ?? c.model.addr), ctx)
       if (!chip) return
       for (const [addr, dev] of chip.devices) this.bus.devices.set(addr, dev)
+      this.probes(ctx, c, chip.devices.map(([a]) => a))
       if (chip.lcd) this.lcds.set(p.id, { hd: chip.lcd, part: p })
       if (chip.oled) this.oleds.set(p.id, chip.oled)
       this.chips.set(p.id, chip)

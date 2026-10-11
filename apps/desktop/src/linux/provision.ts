@@ -4,6 +4,9 @@
 import agentSrc from "../../linux-guest/spacebench-agent?raw"
 import identitySrc from "../../linux-guest/spacebench-identity?raw"
 import gpioSetupSrc from "../../linux-guest/spacebench-gpio-setup?raw"
+import cameraSrc from "../../linux-guest/spacebench-camera?raw"
+import micSrc from "../../linux-guest/spacebench-mic?raw"
+import mediaSetupSrc from "../../linux-guest/spacebench-media-setup?raw"
 import identityUnit from "../../linux-guest/spacebench-identity.service?raw"
 import gpioUnit from "../../linux-guest/spacebench-gpio.service?raw"
 import agentUnit from "../../linux-guest/spacebench-agent.service?raw"
@@ -79,6 +82,7 @@ export async function setupLinux(report: (p: SetupProgress) => void, log?: (text
     const files: [string, string, string][] = [
       ["spacebench-agent", agentSrc, "755"], ["spacebench-identity", identitySrc, "755"], ["spacebench-gpio-setup", gpioSetupSrc, "755"],
       ["spacebench-identity.service", identityUnit, "644"], ["spacebench-gpio.service", gpioUnit, "644"], ["spacebench-agent.service", agentUnit, "644"],
+      ["spacebench-camera", cameraSrc, "755"], ["spacebench-mic", micSrc, "755"], ["spacebench-media-setup", mediaSetupSrc, "755"],
       ["provision.sh", provisionSrc, "755"],
     ]
     for (const [name, text, mode] of files) await con.put(`/root/spacebench/${name}`, text, mode)

@@ -12,12 +12,16 @@ export async function piExec(board: LinuxBoardId, cmd: string, timeoutS = 120, s
   const keep = { out: vm.onOutput, exit: vm.onExit }
   let output = ""
   try {
+    let stopped = false
     const code = await new Promise<number | null>((ok) => {
-      const t = setTimeout(() => ok(null), timeoutS * 1000)
+      const t = setTimeout(() => { clearInterval(w); ok(null) }, timeoutS * 1000)
+      // the VM went away (ended elsewhere): no exit will come
+      const w = setInterval(() => { if (!vm.running) { stopped = true; clearTimeout(t); clearInterval(w); ok(null) } }, 500)
       vm.onOutput = (s) => { output += s }
-      vm.onExit = (c) => { clearTimeout(t); ok(c) }
+      vm.onExit = (c) => { clearTimeout(t); clearInterval(w); ok(c) }
       void vm.run(cmd)
     })
+    if (stopped) return { code: null, output: `${output}\n(the board stopped)` }
     if (code === null) await vm.kill()
     // an install must survive the VM being stopped
     await vm.sync()

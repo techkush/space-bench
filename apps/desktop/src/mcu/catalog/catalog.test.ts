@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest"
-import { CATALOG } from "."
+import { CATALOG, simulated } from "."
 import { draw } from "./look"
 import { PARTS } from "../parts"
 
 describe("parts catalogue", () => {
+  it("has no \"Drawing only\" parts: every part is simulated (only boards without an emulator aren't)", () => {
+    const drawn = CATALOG.filter((p) => !simulated(p) && !p.noEmu).map((p) => p.type)
+    expect(drawn).toEqual([])
+    // and every proto model behind them exists
+    for (const p of CATALOG) if (p.model.m === "none" && !p.noEmu) expect(p.board || p.legacy, p.type).toBeTruthy()
+  })
   it("lists every part once per key, with groups", () => {
     const keys = PARTS.map((p) => p.key)
     expect(new Set(keys).size).toBe(keys.length)

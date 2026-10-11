@@ -7,14 +7,23 @@ import type { BoardDef } from "@/mcu/boards"
 import type { ChipLink, FrameOut, PinState } from "@/cosim/chip"
 import { linuxVm, type GuestFrame, type LinuxBoardId, type LinuxVm } from "./agent"
 import { piExec } from "./exec"
+import type { PartUi } from "@/mcu/circuit"
+import { applyMedia, guestMedia, mediaControls, mediaNote, type MediaPart } from "./media"
 
 const state = (out: number, pu: boolean, pd: boolean): PinState => ({ out: out === 1 ? 1 : out === 0 ? 0 : -1, pu, pd })
 
 /** The program a Linux board runs: main.py if there is one, else the first .py file. */
 export const mainFile = (fw: Firmware) => (fw.files.find((f) => f.name === "main.py") ?? fw.files.find((f) => f.name.endsWith(".py")))?.name ?? "main.py"
 
-/** Boot the board (if it isn't already this one) and copy the program's files to /home/pi. */
-export async function prepareBoard(board: BoardDef, fw: Firmware, say: (text: string) => void): Promise<LinuxVm> {
+/** The rest of the board's canvas: its parts and their control values (media parts, media.ts). */
+export interface BoardCanvas { parts?: MediaPart[]; ui?: Record<string, PartUi> }
+
+/**
+ * Boot the board (if it isn't already this one) and copy the program's files to /home/pi.
+ * With the canvas: a Camera Module / ReSpeaker part on it starts its device in the guest (and
+ * none stops it) — see media.ts.
+ */
+export async function prepareBoard(board: BoardDef, fw: Firmware, say: (text: string) => void, canvas?: BoardCanvas): Promise<LinuxVm> {
   const vm = linuxVm()
   await vm.ensure((board.linux ?? "pi5") as LinuxBoardId, () => say(`Starting ${board.name} (Linux)…\n`))
   for (const f of fw.files) await vm.put(`/home/pi/${f.name}`, f.content)
@@ -27,12 +36,16 @@ export async function prepareBoard(board: BoardDef, fw: Firmware, say: (text: st
     const missing = wants.filter((w) => !have.has(norm(w)))
     if (missing.length) say(`(requirements.txt: ${missing.join(", ")} not installed — install with pip in the Terminal, or ask the assistant)\n`)
   }
+  if (canvas?.parts) {
+    try { say(mediaNote(await applyMedia(vm, guestMedia(canvas.parts, canvas.ui)))) } catch (e) { say(`(camera / microphone: ${e instanceof Error ? e.message : String(e)})\n`) }
+  }
   return vm
 }
 
-export async function linuxChip(board: BoardDef, fw: Firmware): Promise<ChipLink> {
+export async function linuxChip(board: BoardDef, fw: Firmware, canvas?: BoardCanvas): Promise<ChipLink> {
   let printed = ""
-  const vm = await prepareBoard(board, fw, (t) => { printed += t })
+  const vm = await prepareBoard(board, fw, (t) => { printed += t }, canvas)
+  const ui: Record<string, PartUi> = { ...canvas?.ui }
   vm.onOutput = (t) => { printed += t }
   vm.onExit = (code) => { printed += `\n[program exited with code ${code}]\n` }
   let started = false
@@ -55,6 +68,14 @@ export async function linuxChip(board: BoardDef, fw: Firmware): Promise<ChipLink
       return out
     },
     serialWrite: (text) => { void vm.stdin(text) },
+    // a media part's slider moved: its feeder follows
+    ui: (id, u) => {
+      if (!canvas?.parts) return
+      ui[id] = { ...ui[id], ...u, v: { ...ui[id]?.v, ...u.v } }
+      const m = guestMedia(canvas.parts, ui)
+      if (id === m.ids.camera && m.camera) void mediaControls(vm, { camera: m.camera }).catch(() => {})
+      if (id === m.ids.mic && m.mic) void mediaControls(vm, { mic: m.mic }).catch(() => {})
+    },
     dispose: () => { void vm.kill().then(() => vm.resume()) },
   }
 }

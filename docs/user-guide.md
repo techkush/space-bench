@@ -256,6 +256,39 @@ Wokwi / Velxio, fully local.
 - **Logic Analyser:** pin traces, frequency and duty, VCD export.
 - **Imported Fritzing parts** (.fzpz).
 
+### Every catalogue part is simulated
+No part is "Drawing only" any more: each one is modelled at the register / command / protocol level so its
+usual Arduino library works unchanged. The models live in `src/mcu/catalog/models/`, one family per file, each
+with tests that compile real sketches against the real libraries.
+- **How parts connect:** hardware SPI (`SPI.transfer`, UNO D10–13, Mega 50–53, Pico SPI0/SPI1) reaches the
+  part whose CS is low, and bit-banged SPI works too. A part on the board's hardware TX hears `Serial`
+  (`Serial1` on the Pico), with SoftwareSerial anywhere else. On the Pico, I²C address probes
+  (`begin()`, bus scans) are answered.
+- **SPI sensors / storage:** MAX31856 thermocouple, MAX31865 PT100/PT1000, and a microSD card with a real
+  FAT16 volume (`SD` library; CD pin).
+- **Colour screens:** ILI9341, 2.8" ILI9341 + XPT2046 and 3.5" ILI9488 + XPT2046 (press or drag on the screen
+  to touch), the round GC9A01 for XIAO, Grove 1.22" ST7789, SSD1306 over SPI, and the SSD1327 greyscale OLED.
+- **E-paper (GxEPD2):** 1.54", 2.13" (B/W and 3-colour), 2.9" (B/W and 3-colour), 4.2", 5.65" 7-colour,
+  7.5", plus the Grove 2.13" over UART. The picture changes only on a refresh, while BUSY is active.
+- **Sensors:** BMA456 step counter, BMM150 compass, ADXL372, BMI088, AS3935 lightning (click for a strike),
+  DPS310, SPA06-003, HP206C, and the MLX90640 / MLX90641 / MLX90621 thermal cameras (a scene with a
+  hot spot, shown as a thermal picture).
+- **Modules:** PAG7660 gesture, the RGB Encoder Wheel, PN532 NFC (MIFARE 1K / NTAG213 tags that keep
+  their data), the Grove LED matrices, the M5Stack Chain matrices, the COB LED driver, the recorder, the
+  12-key touch keypad, the fingerprint scanner, and the UART ultrasonic (SMS812).
+- **Communication:** RS-232 and RS-485 pairs, the CAN module (Longan protocol), Wi-Fi AT modules
+  (ESP8285, WizFi360) joining a **WiFi Access Point** part with a small simulated internet (HTTP, echo,
+  NTP), HM-11 BLE and Serial Bluetooth (with each other or a virtual phone), the Wio-E5 (LoRaWAN join and
+  messages, TEST-mode pairs), and Grove LoRa 433 / 868 (RadioHead, range from a distance slider).
+- **AI / voice:** HuskyLens (I²C / UART), Grove Vision AI V2 (SSCMA), the speech and voice recognisers and the
+  DF2301Q (choose what they "hear" and "see"), and ReSpeaker Lite (its I²C control).
+- **On a Raspberry Pi board:** the Camera Module is `/dev/video0` showing a test scene (OpenCV / V4L2;
+  picamera2 can't see it), and the ReSpeaker is a sound card (`arecord`, PyAudio). The assistant installs
+  these add-ons once, asking first.
+
+Limits: modules talk to each other only on the same board. ESP32 boards have no Wi-Fi (QEMU has no radio).
+I²S audio isn't simulated.
+
 Needs `arduino-cli` (`brew install arduino-cli`). The page installs the board cores for you (AVR, RP2040, ESP32). The ESP32 also needs Espressif's QEMU (Settings → Microcontrollers → Install, or ESP-IDF's).
 See [`plan-03.md`](../plan-03.md) for what comes next (Pico, ESP32, Raspberry Pi, breadboard, ngspice check).
 

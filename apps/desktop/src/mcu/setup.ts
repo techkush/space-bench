@@ -4,6 +4,7 @@
 // user agrees to first (the workspace asks).
 import type { BoardDef } from "./boards"
 import { cliStatus, coreOf, installCore } from "./compile"
+import type { LinuxBoardId } from "@/linux/agent"
 
 export interface SetupItem {
   /** what install() takes: "arduino-cli", "core:arduino:avr", "qemu", "pi-system", "renode", "esp32-qemu" */
@@ -24,7 +25,8 @@ const err = (e: unknown) => (e instanceof Error ? e.message : String(e))
  */
 export const CHANGES_SYSTEM = /\b(sudo|curl|wget|dpkg\s+-[iPr]|snap\s+(install|remove)|npm\s+(i|install|uninstall)\b|apt(-get)?\s+(install|reinstall|remove|purge|upgrade|dist-upgrade|full-upgrade|autoremove)|pip3?\s+(install|uninstall|download)|-m\s+pip\s+(install|uninstall|download))/
 
-export async function checkSetup(boards: BoardDef[], cliPath?: string): Promise<SetupItem[]> {
+/** `partTypes`: the project's parts — a Camera Module / ReSpeaker on a Pi adds its add-on. */
+export async function checkSetup(boards: BoardDef[], cliPath?: string, partTypes: string[] = []): Promise<SetupItem[]> {
   const out: SetupItem[] = []
   const chips = new Set(boards.map((b) => b.chip))
   const sketches = boards.filter((b) => b.chip !== "linux")
@@ -56,6 +58,28 @@ export async function checkSetup(boards: BoardDef[], cliPath?: string): Promise<
       out.push(st.boot && !old
         ? { id: "pi-system", label: "Raspberry Pi system (Debian 13 + gpiozero)", ok: true, detail: `set up in ${st.dir}` }
         : { id: "pi-system", label: "Raspberry Pi system (Debian 13 + gpiozero)", ok: false, detail: old ? "set up by an older Space Bench — needs setting up again" : "not set up yet", install: "download Debian 13 for arm64 and prepare it as a Raspberry Pi (about 1 GB, 5–10 minutes)" })
+      // the camera / microphone parts on a Pi need an add-on in its system (src/linux/media.ts)
+      const { CAMERA_PART, MIC_PART } = await import("@/linux/media")
+      const cam = partTypes.includes(CAMERA_PART), mic = partTypes.includes(MIC_PART)
+      if (cam || mic) {
+        const camItem = { id: "pi-camera", label: "Raspberry Pi camera add-on (Camera Module → /dev/video0)", install: "install v4l2loopback (built for the Pi's kernel) and v4l-utils in the Raspberry Pi system (about 5 MB, under a minute)" }
+        const micItem = { id: "pi-audio", label: "Raspberry Pi audio add-on (ReSpeaker → a sound card)", install: "install alsa-utils (aplay / arecord) in the Raspberry Pi system (about 2 MB)" }
+        if (!st.boot || old) {
+          if (cam) out.push({ ...camItem, ok: false, detail: "needs the Raspberry Pi system first" })
+          if (mic) out.push({ ...micItem, ok: false, detail: "needs the Raspberry Pi system first" })
+        } else {
+          try {
+            const { mediaStatus } = await import("@/linux/media")
+            const pi = boards.find((b) => b.chip === "linux")
+            const has = await mediaStatus((pi?.linux ?? "pi5") as LinuxBoardId)
+            if (cam) out.push(has.camera ? { ...camItem, ok: true, detail: "installed" } : { ...camItem, ok: false, detail: "not installed" })
+            if (mic) out.push(has.audio ? { ...micItem, ok: true, detail: "installed" } : { ...micItem, ok: false, detail: "not installed" })
+          } catch (e) {
+            if (cam) out.push({ ...camItem, ok: false, detail: `couldn't ask the Raspberry Pi: ${err(e)}` })
+            if (mic) out.push({ ...micItem, ok: false, detail: `couldn't ask the Raspberry Pi: ${err(e)}` })
+          }
+        }
+      }
     } catch (e) { out.push({ id: "qemu", label: "QEMU (runs the Raspberry Pi)", ok: false, detail: err(e) }) }
   }
   if (chips.has("renode")) {
@@ -92,6 +116,12 @@ export async function installSetup(id: string, boards: BoardDef[], cliPath?: str
     const { setupLinux } = await import("@/linux/provision")
     await setupLinux((p) => progress?.(`${p.step}/${p.of} · ${p.text}`))
     return "The Raspberry Pi system is set up."
+  }
+  if (id === "pi-camera" || id === "pi-audio") {
+    const { installMedia } = await import("@/linux/media")
+    const pi = boards.find((b) => b.chip === "linux")
+    if (!pi) throw new Error("This project has no Raspberry Pi board")
+    return installMedia((pi.linux ?? "pi5") as LinuxBoardId, id === "pi-camera" ? "camera" : "audio", progress)
   }
   if (id === "renode") {
     const { installRenode } = await import("@/renode/host")

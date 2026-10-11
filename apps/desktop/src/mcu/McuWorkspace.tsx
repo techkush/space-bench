@@ -308,7 +308,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
         w.onmessage = (e: MessageEvent<FromWorker>) => { if (e.data.type === "fed-in") levels = e.data.levels; else prev?.call(w, e) }
         try {
           const chip = fedDef.chip === "linux"
-            ? await linuxChip(fedDef, { files: JSON.parse(fws[id] as string) as { name: string; content: string }[] })
+            ? await linuxChip(fedDef, { files: JSON.parse(fws[id] as string) as { name: string; content: string }[] }, { parts: boardDiagram(simDiagram, id).parts, ui })
             : await renodeChip(fedDef, fws[id] as string)
           if (run !== fedRun.current) { chip.dispose(); return }
           fedChips.current.set(id, chip)
@@ -343,6 +343,8 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
   const sendUi = useCallback((id: string, u: PartUi) => {
     setUiState((old) => ({ ...old, [id]: { ...old[id], ...u, ...(u.v ? { v: { ...old[id]?.v, ...u.v } } : {}) } }))
     for (const w of workers.current.values()) w.postMessage({ type: "ui", id, ui: u } satisfies ToWorker)
+    // a Raspberry Pi's camera / microphone parts feed the guest (src/linux/media.ts)
+    for (const c of fedChips.current.values()) c.ui?.(id, u)
   }, [])
 
   // ── compile & run ──────────────────────────────────────────────────────────────────────
@@ -647,18 +649,20 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
       return `${part} ← ${value}`
     },
     checkSetup: async () => {
-      const items = await checkSetup(live.current.defs, live.current.cliPath)
+      const items = await checkSetup(live.current.defs, live.current.cliPath, live.current.diagram.parts.map((p) => p.type))
       if (!items.length) return "Nothing to check — add a board first."
       return items.map((i) => `${i.ok ? "ok     " : "MISSING"} ${i.id} — ${i.label}: ${i.detail}${!i.ok && i.install ? ` (install: ${i.install})` : ""}`).join("\n") + (items.every((i) => i.ok) ? "\nEverything this project needs is installed." : "")
     },
     install: async (item, reason) => {
-      const items = await checkSetup(live.current.defs, live.current.cliPath)
+      const items = await checkSetup(live.current.defs, live.current.cliPath, live.current.diagram.parts.map((p) => p.type))
       const it = items.find((i) => i.id === item.trim())
       if (!it) return { ok: false, text: `Unknown item ${item} — check_setup lists: ${items.map((i) => i.id).join(", ")}` }
       if (it.ok) return { ok: true, text: `${it.label} is already installed (${it.detail})` }
       if (!it.install) return { ok: false, text: `${it.label} can't be installed from here: ${it.detail}` }
       if (!(await live.current.askPermission(`Install ${it.label}?`, it.install, reason)))
         return { ok: false, text: "The user didn't allow the install. Stop, and tell them how to install it themselves (Settings → Microcontrollers)." }
+      // a Pi add-on installs in the running board's system: its program stops first (one at a time)
+      if (it.id.startsWith("pi-") && it.id !== "pi-system" && live.current.running) { live.current.stop(); await new Promise((r) => setTimeout(r, 1000)) }
       setInstalling(`Installing ${it.label}…`)
       try { return { ok: true, text: await installSetup(it.id, live.current.defs, live.current.cliPath, (t) => setInstalling(`${it.label}: ${t}`)) } }
       catch (e) { return { ok: false, text: `Install failed: ${e instanceof Error ? e.message : String(e)}` } }

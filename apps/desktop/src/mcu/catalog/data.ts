@@ -564,7 +564,12 @@ gate("xor", 2); gate("xnor", 2); gate("not", 1)
 for (const p of parts) {
   const x = PATCHES[p.type]
   if (!x) continue
-  Object.assign(p, { model: x.model, ...(x.look ? { look: x.look } : {}), ...(x.pins ? { pins: x.pins } : {}) })
+  Object.assign(p, {
+    model: x.model, ...(x.look ? { look: x.look } : {}), ...(x.pins ? { pins: x.pins } : {}),
+    ...(x.attrs ? { attrs: { ...p.attrs, ...x.attrs } } : {}), ...(x.settings ? { settings: { ...p.settings, ...x.settings } } : {}),
+  })
+  if (x.attrs) p.attrs = { ...p.attrs, ...x.attrs }
+  if (x.settings) p.settings = { ...p.settings, ...x.settings }
   p.hint = x.hint ?? describe(x.model, p.pins)
 }
 

@@ -122,7 +122,8 @@ export class Rp2040Machine implements Machine {
   uartFeed(port: number, bytes: number[]) { for (const b of bytes) this.mcu.uart[port]?.feedByte(b) }
   /** SPI0 / SPI1 (arduino-pico: SPI on GP16–19, SPI1 on GP10–12). */
   attachSpi(transfer: (bus: number, mosi: number) => number) {
-    this.mcu.spi.forEach((s, bus) => { s.onTransmit = (v) => s.completeTransmit(transfer(bus, v) & 0xff) })
+    // 16-bit frames (SPI.transfer16 sets DSS to 16) reach the devices as two bytes, MSB first
+    this.mcu.spi.forEach((s, bus) => { s.onTransmit = (v) => s.completeTransmit(s.dataBits > 8 ? ((transfer(bus, (v >> 8) & 0xff) & 0xff) << 8) | (transfer(bus, v & 0xff) & 0xff) : transfer(bus, v) & 0xff) })
   }
 
   /** Wire (I2C0: GP4 = SDA, GP5 = SCL by default in arduino-pico). */

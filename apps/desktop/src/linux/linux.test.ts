@@ -4,7 +4,8 @@
 import fs from "node:fs"
 import path from "node:path"
 import zlib from "node:zlib"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
+import { acquireVm, releaseVm } from "./vm-lock.testutil"
 import { linuxBackend } from "../../vite-linux"
 import { run } from "../../vite-ngspice"
 
@@ -48,6 +49,9 @@ const simulate = async (net: SpiceNetlist): Promise<JobResult> => {
 describe.skipIf(!ready)("Raspberry Pi (Linux VM) in a schematic", { timeout: 180_000 }, () => {
   // a failed test must not leave its VM holding the disk
   afterEach(async () => { await linuxVm().shutdown() })
+  // one VM at a time: the other Pi test file waits for this one
+  beforeAll(() => acquireVm(), 1_200_000)
+  afterAll(() => releaseVm())
 
   it("gpiozero blinks an LED through the circuit and reads a pulled-down input", async () => {
     const r = await compileKirk(`circuit PiLed {

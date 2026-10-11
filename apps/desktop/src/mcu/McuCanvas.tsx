@@ -16,18 +16,33 @@ import type { PartUi } from "./circuit"
 import type { Frame } from "./sim"
 import { paintOled } from "./devices"
 import { catalogPart, defineCatalog, type CatalogPart } from "./catalog"
-import type { ModView } from "./catalog/look"
+import { drawingOf, type ModView } from "./catalog/look"
 
 defineCatalog()
 /** what a catalogue part responds to while running: a click, a press, or its own events */
-function interaction(c: CatalogPart | undefined): "toggle" | "press" | "events" | null {
+function interaction(c: CatalogPart | undefined): "toggle" | "press" | "events" | "touch" | null {
   if (!c) return null
   const m = c.model
+  if (m.m === "proto" && m.kind.endsWith("-touch")) return "touch" // a touch screen: press / drag on it
   if (m.m === "digital") return "toggle"
   if (m.m === "button") return m.latch ? "toggle" : "press"
   if (m.m === "proto" && (m.kind === "rfid125" || m.kind === "dualbutton")) return m.kind === "rfid125" ? "toggle" : "press"
   if (m.m === "proto" && ["encoder", "keypad", "irremote", "dialer"].includes(m.kind)) return "events"
+  if (m.m === "proto" && m.kind === "as3935") return "toggle" // a click is a lightning strike
+  if (m.m === "proto" && ["speech-recognizer", "offline-voice", "df2301q"].includes(m.kind)) return "toggle" // a click says the selected command
   return null
+}
+/** where a pointer is on a catalogue part's screen: 0..1 across (tx) and down (ty), or null off the screen */
+function touchPoint(e: React.PointerEvent, p: DiagramPart): { tx: number; ty: number } | null {
+  const c = catalogPart(p.type)
+  if (!c || !p.type.startsWith("sb-")) return null
+  const d = drawingOf(c), r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const rot = (((p.rotate ?? 0) % 360) + 360) % 360, side = rot === 90 || rot === 270
+  const w = side ? r.height : r.width, h = side ? r.width : r.height
+  const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2), a = (-rot * Math.PI) / 180
+  const x = ((dx * Math.cos(a) - dy * Math.sin(a)) / w + 0.5) * d.w, y = ((dx * Math.sin(a) + dy * Math.cos(a)) / h + 0.5) * d.h
+  const tx = (x - d.live.x) / d.live.w, ty = (y - d.live.y) / d.live.h
+  return tx >= 0 && tx <= 1 && ty >= 0 && ty <= 1 ? { tx, ty } : null
 }
 const isInteractive = (type: string) => INTERACTIVE.has(type) || !!interaction(catalogPart(type))
 
@@ -132,6 +147,8 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
   const drag = useRef<{ id: string; sx: number; sy: number; left: number; top: number; moved: boolean; carry: { id: string; left: number; top: number }[] } | null>(null)
   const pan = useRef<{ sx: number; sy: number; x: number; y: number } | null>(null)
   const active = useRef(new Map<string, boolean>())
+  /** the touch screen being pressed (its part id) */
+  const touching = useRef<string | null>(null)
 
   // ── measuring pins ─────────────────────────────────────────────────────────────────────
   const measureAll = useCallback(() => {
@@ -543,9 +560,11 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
                 if (pulse) setTimeout(() => { active.current.set(p.id, false); onUi(p.id, { active: false }) }, 50)
               }
             }}
-            onPointerDown={(e) => { startPart(e, p); if (running && interaction(catalogPart(p.type)) === "press") { const half = e.nativeEvent.offsetX > (e.currentTarget as HTMLElement).offsetWidth / 2 ? "b2" : "b1"; onUi(p.id, { pressed: true, v: { [half]: 1 } }) } }}
-            onPointerUp={() => { if (running && interaction(catalogPart(p.type)) === "press") onUi(p.id, { pressed: false, v: { b1: 0, b2: 0 } }) }}
-            onPointerLeave={() => { if (running && interaction(catalogPart(p.type)) === "press") onUi(p.id, { pressed: false, v: { b1: 0, b2: 0 } }) }}>
+            onPointerDown={(e) => { startPart(e, p); if (running && interaction(catalogPart(p.type)) === "press") { const half = e.nativeEvent.offsetX > (e.currentTarget as HTMLElement).offsetWidth / 2 ? "b2" : "b1"; onUi(p.id, { pressed: true, v: { [half]: 1 } }) }
+              if (running && interaction(catalogPart(p.type)) === "touch") { const t = touchPoint(e, p); if (t) { touching.current = p.id; (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); onUi(p.id, { pressed: true, v: t }) } } }}
+            onPointerMove={(e) => { if (touching.current === p.id) { const t = touchPoint(e, p); if (t) onUi(p.id, { pressed: true, v: t }) } }}
+            onPointerUp={() => { if (touching.current === p.id) { touching.current = null; onUi(p.id, { pressed: false }) } if (running && interaction(catalogPart(p.type)) === "press") onUi(p.id, { pressed: false, v: { b1: 0, b2: 0 } }) }}
+            onPointerLeave={() => { if (touching.current === p.id) { touching.current = null; onUi(p.id, { pressed: false }) } if (running && interaction(catalogPart(p.type)) === "press") onUi(p.id, { pressed: false, v: { b1: 0, b2: 0 } }) }}>
             {createElement(p.type, { ref: (el: El | null) => bind(p, el), style: { display: "flex" }, ...attrProps(p) })}
           </div>
         ))}

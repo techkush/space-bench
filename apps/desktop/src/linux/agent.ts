@@ -3,6 +3,9 @@
 import agentSrc from "../../linux-guest/spacebench-agent?raw"
 import identitySrc from "../../linux-guest/spacebench-identity?raw"
 import gpioSetupSrc from "../../linux-guest/spacebench-gpio-setup?raw"
+import cameraSrc from "../../linux-guest/spacebench-camera?raw"
+import micSrc from "../../linux-guest/spacebench-mic?raw"
+import mediaSetupSrc from "../../linux-guest/spacebench-media-setup?raw"
 import { linuxPoll, linuxQmp, linuxSend, linuxStart, linuxStatus, linuxStop, type LinuxStatus } from "./host"
 
 /** the bundled agent's version (spacebench-agent: VERSION = "n") */
@@ -56,6 +59,10 @@ export class LinuxVm {
   async update() {
     await this.put("/usr/local/sbin/spacebench-identity", identitySrc, "755")
     await this.put("/usr/local/sbin/spacebench-gpio-setup", gpioSetupSrc, "755")
+    // the media parts' feeders and their add-ons' installer (see media.ts)
+    await this.put("/usr/local/sbin/spacebench-camera", cameraSrc, "755")
+    await this.put("/usr/local/sbin/spacebench-mic", micSrc, "755")
+    await this.put("/usr/local/sbin/spacebench-media-setup", mediaSetupSrc, "755")
     await this.put("/usr/local/sbin/spacebench-agent", agentSrc, "755")
     // the new agent announces itself; anything sent before that would be lost in the exec
     const ready = this.next("ready", 20_000)
