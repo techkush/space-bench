@@ -219,6 +219,9 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
 
   // ── simulation frame → element state ───────────────────────────────────────────────────
   const oledVer = useRef(new Map<string, number>())
+  /** screens' last pixels, and the version drawn into a Wokwi element's own canvas */
+  const images = useRef(new Map<string, NonNullable<ModView["image"]>>())
+  const drawnVer = useRef(new Map<string, number>())
   useEffect(() => {
     for (const p of diagram.parts) {
       const el = els.current.get(p.id)
@@ -228,6 +231,19 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
       if (cat && !cat.base && !isBoardType(p.type)) {
         // catalogue parts: their view, plus LED brightness from the solver
         const m: ModView | undefined = frame ? { ...frame.mods?.get(p.id), ...(frame.leds.get(p.id)?.length ? { glow: frame.leds.get(p.id) } : {}) } : undefined
+        // a screen's pixels come only when they change: keep the last ones
+        if (m?.image) {
+          const im = m.image, kept = images.current.get(p.id)
+          if (im.data) images.current.set(p.id, im)
+          else if (kept?.ver === im.ver) m.image = kept
+          // Wokwi's own screens (ILI9341) draw into their canvas
+          const cv = (el as { canvas?: HTMLCanvasElement }).canvas
+          const shown = m.image
+          if (cv && shown.data && drawnVer.current.get(p.id) !== shown.ver) {
+            drawnVer.current.set(p.id, shown.ver)
+            cv.getContext("2d")?.putImageData(new ImageData(new Uint8ClampedArray(shown.data), shown.w, shown.h), 0, 0)
+          }
+        }
         if (p.type.startsWith("sb-")) { el.state = m; continue }
         if (t === "wokwi-stepper-motor" && m?.angle !== undefined) el.angle = m.angle
         else if (t === "wokwi-biaxial-stepper" && m?.angle !== undefined) { el.outerHandAngle = m.angle; el.innerHandAngle = (m.rows?.[0] ?? 0) / 100 }

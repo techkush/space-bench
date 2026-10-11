@@ -86,4 +86,13 @@ export interface Machine {
   schedule(fn: () => void, ticks: number): void
   /** connect an I²C bus to the chip's controller (bus 0) */
   attachI2C(events: I2CEvents): I2CController
+  /**
+   * connect the chip's hardware SPI controllers: `transfer` gets each byte the firmware sends on
+   * a bus (0, 1 …) and returns the byte read back on MISO. Chips without one leave it out.
+   */
+  attachSpi?(transfer: (bus: number, mosi: number) => number): void
+  /** a byte the firmware sent on a hardware UART (port 0 = Serial on the AVR, Serial1 on the Pico) */
+  onUartTx?: ((port: number, b: number) => void) | null
+  /** bytes arriving on a hardware UART's RX */
+  uartFeed?(port: number, bytes: number[]): void
 }

@@ -170,7 +170,7 @@ export class AvrMachine implements Machine {
     } else {
       for (const cfg of mega ? MEGA_TIMERS : [timer0Config, timer1Config, timer2Config]) this.timers.push(new AVRTimer(this.cpu, cfg))
       this.usart = new AVRUSART(this.cpu, mega ? { ...usart0Config, rxCompleteInterrupt: v(26), dataRegisterEmptyInterrupt: v(27), txCompleteInterrupt: v(28) } : usart0Config, board.hz)
-      this.usart.onByteTransmit = (b) => { this.serialBuf += String.fromCharCode(b) }
+      this.usart.onByteTransmit = (b) => { this.serialBuf += String.fromCharCode(b); this.onUartTx?.(0, b) }
       this.adc = new AVRADC(this.cpu, mega ? { ...adcConfig, adcInterrupt: v(30), numChannels: 16, muxChannels: megaChannels } : adcConfig)
       this.twi = new AVRTWI(this.cpu, mega ? { ...twiConfig, twiInterrupt: v(40) } : twiConfig, board.hz)
       this.spi = new AVRSPI(this.cpu, mega ? { ...spiConfig, spiInterrupt: v(25) } : spiConfig, board.hz)
@@ -242,6 +242,11 @@ export class AvrMachine implements Machine {
   get now() { return this.cpu.cycles }
   runFor(ticks: number) { this.run(ticks, 1000) }
   schedule(fn: () => void, ticks: number) { this.cpu.addClockEvent(fn, Math.max(1, Math.round(ticks))) }
+  onUartTx: ((port: number, b: number) => void) | null = null
+  uartFeed(port: number, bytes: number[]) { if (port === 0) this.rx.push(...bytes) }
+  attachSpi(transfer: (bus: number, mosi: number) => number) {
+    if (this.spi) this.spi.onTransfer = (v) => transfer(0, v) & 0xff
+  }
   attachI2C(events: I2CEvents): I2CController {
     if (!this.twi) { const nop = () => {}; return { completeStart: nop, completeStop: nop, completeConnect: nop, completeWrite: nop, completeRead: nop } }
     this.twi.eventHandler = {

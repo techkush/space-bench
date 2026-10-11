@@ -4,6 +4,7 @@
 // the simulation actually does.
 import { boardByType } from "../boards"
 import type { CatalogPart, Ctl, Group, Look, Model } from "./types"
+import { PATCHES } from "./models/parts"
 
 // ── helpers ────────────────────────────────────────────────────────────────────────────────
 const c = (key: string, label: string, min: number, max: number, step: number, unit: string, def: number): Ctl => ({ key, label, min, max, step, unit, def })
@@ -558,5 +559,13 @@ const gate = (fn: "and" | "or" | "nand" | "nor" | "xor" | "xnor" | "not", n: num
 }
 for (const fn of ["and", "nand", "or", "nor"] as const) for (const n of [2, 3, 4]) gate(fn, n)
 gate("xor", 2); gate("xnor", 2); gate("not", 1)
+
+// the families' models (catalog/models/*.parts.ts) bring parts that were drawn only to life
+for (const p of parts) {
+  const x = PATCHES[p.type]
+  if (!x) continue
+  Object.assign(p, { model: x.model, ...(x.look ? { look: x.look } : {}), ...(x.pins ? { pins: x.pins } : {}) })
+  p.hint = x.hint ?? describe(x.model, p.pins)
+}
 
 export const CATALOG: CatalogPart[] = parts

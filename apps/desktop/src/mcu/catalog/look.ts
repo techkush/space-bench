@@ -29,6 +29,28 @@ export interface ModView {
   bitmap?: { w: number; h: number; data: Uint8Array }
   /** RGB backlight of a Grove LCD */
   backlight?: [number, number, number]
+  /**
+   * a colour screen (TFT, e-paper, greyscale OLED): w×h RGBA pixels. `ver` changes with the
+   * picture (nextImageVer()); frames carry `data` only when it changed — the canvas keeps the rest.
+   */
+  image?: { w: number; h: number; ver: number; data?: Uint8ClampedArray }
+}
+
+/** data: URLs of recent images, by version */
+const imageUrls = new Map<number, string>()
+function imageUrl(im: { w: number; h: number; ver: number; data?: Uint8ClampedArray }): string | null {
+  const hit = imageUrls.get(im.ver)
+  if (hit) return hit
+  if (!im.data || typeof document === "undefined") return null
+  const cv = document.createElement("canvas")
+  cv.width = im.w; cv.height = im.h
+  const ctx = cv.getContext("2d")
+  if (!ctx) return null
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(im.data), im.w, im.h), 0, 0)
+  const url = cv.toDataURL()
+  imageUrls.set(im.ver, url)
+  if (imageUrls.size > 64) imageUrls.delete(imageUrls.keys().next().value!)
+  return url
 }
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -309,6 +331,11 @@ export function paint(p: CatalogPart, d: Drawing, s: ModView | undefined, attrs:
     const size = 32, x0 = d.w / 2 - size / 2, y0 = 16
     out += `<rect x="${x0 - 2}" y="${y0 - 2}" width="${size + 4}" height="${size + 4}" fill="#111"/>`
     for (let r = 0; r < 8; r++) for (let col = 0; col < 8; col++) out += `<circle cx="${x0 + col * 4 + 2}" cy="${y0 + r * 4 + 2}" r="1.5" fill="${(s.rows[r] ?? 0) & (1 << col) ? "#ff2a2a" : "#3a0d0d"}"/>`
+    return out
+  }
+  if (s.image) {
+    const url = imageUrl(s.image)
+    if (url) out += `<image x="${L.x}" y="${L.y}" width="${L.w}" height="${L.h}" href="${url}" preserveAspectRatio="none" style="image-rendering:pixelated"/>`
     return out
   }
   if (s.bitmap && typeof document !== "undefined") {
