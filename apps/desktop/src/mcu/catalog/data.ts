@@ -139,7 +139,7 @@ arm("XIAO MG24 Sense", "EFR32MG24", "Seeed XIAO", 11, "#2b2b2b"); arm("XIAO nRF5
 arm("Pimoroni Pico Plus 2 W", "RP2350", "Raspberry Pi", 20, "#111"); arm("Pimoroni Badger 2350", "RP2350", "Raspberry Pi", 10, "#111"); arm("Pimoroni Stellar Unicorn", "RP2350", "Raspberry Pi", 6, "#111")
 arm("XIAO 0.96\" IPS Display", "display carrier", "Seeed XIAO", 11, "#2b2b2b"); arm("XIAO 1.14\" IPS Display", "display carrier", "Seeed XIAO", 11, "#2b2b2b"); arm("XIAO 1.47\" IPS Touch Display", "display carrier", "Seeed XIAO", 11, "#2b2b2b")
 arm("Beetle RP2040", "RP2040", "Raspberry Pi", 10, "#111"); arm("UNIHIKER M10", "RK3308", "Raspberry Pi", 10, "#111")
-brd("ATtiny85", { k: "dip", label: "ATtiny85" }, ["PB5", "PB3", "PB4", "GND", "PB0", "PB1", "PB2", "VCC"], { sub: "Arduino", noEmu: "ATtiny85 needs ATTinyCore and an ATtiny emulator profile — drawn for wiring; not emulated yet." })
+add("Boards", "Arduino", "ATtiny85", { k: "dip", label: "ATtiny85" }, ["PB5", "PB3", "PB4", "GND", "PB0", "PB1", "PB2", "VCC"], none(), { type: "sb-attiny85", board: true, hint: "ATtiny85 at 8 MHz (ATTinyCore — installed from the Microcontrollers page): port B, Timer0/1 PWM, the ADC (A0–A3 = PB5, PB2, PB4, PB3); Serial is software TX on PB0." })
 
 // ── Sensors ────────────────────────────────────────────────────────────────────────────────
 const S = "Sensors"

@@ -11,6 +11,7 @@ const SYMBOLS: [RegExp, string][] = [
   // bare STM32 chips run on Renode as the board built around them
   [/^MCU_ST_STM32F4:STM32F407V(E|G|_E-G_)Tx$/, "sb-stm32f4-discovery"],
   [/^MCU_ST_STM32F1:STM32F103C8Tx$/, "sb-stm32-blue-pill"],
+  [/^MCU_Microchip_ATtiny:ATtiny85V?-\d+[MPS]$/, "sb-attiny85"],
 ]
 
 /**

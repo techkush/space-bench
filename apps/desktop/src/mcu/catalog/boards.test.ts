@@ -32,7 +32,8 @@ describe("board variants", { timeout: 300_000 }, () => {
     for (const c of CATALOG.filter((x) => x.board)) {
       const b = boardByType(c.type)
       expect(b, c.title).toBeTruthy()
-      if (!c.base) expect(c.pins.length, c.title).toBeGreaterThan(8)
+      // a board, or an 8-pin chip like the ATtiny85
+      if (!c.base) expect(c.pins.length, c.title).toBeGreaterThanOrEqual(8)
       for (const pin of c.pins) if (b!.pins[pin]) expect(b!.header ?? [], c.title).toContain(pin)
     }
     expect(new Set(BOARDS.map((b) => b.id)).size).toBe(BOARDS.length)

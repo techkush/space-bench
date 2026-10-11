@@ -46,7 +46,7 @@ export class ChipRunner {
     if (board.chip === "rp2040") {
       if (typeof firmware === "string") throw new Error("The Pico needs a .bin flash image")
       this.machine = new Rp2040Machine(board, firmware)
-    } else if (board.chip === "atmega328p" || board.chip === "atmega2560") {
+    } else if (board.chip === "atmega328p" || board.chip === "atmega2560" || board.chip === "attiny85") {
       if (typeof firmware !== "string") throw new Error("AVR boards need an Intel HEX file")
       this.machine = new AvrMachine(board, firmware)
     } else throw new Error(`${board.name} can't run inside a schematic yet`)

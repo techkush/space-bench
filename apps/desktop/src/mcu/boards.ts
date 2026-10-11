@@ -13,7 +13,7 @@ export interface BoardDef {
   /** wokwi diagram part type */
   type: string
   name: string
-  chip: "atmega328p" | "atmega2560" | "rp2040" | "esp32" | "linux" | "renode"
+  chip: "atmega328p" | "atmega2560" | "attiny85" | "rp2040" | "esp32" | "linux" | "renode"
   fqbn: string
   /** logic supply: output high, pull-ups, ADC reference */
   vcc: number
@@ -231,6 +231,14 @@ BOARDS.push(
   }),
 )
 export const isRenodeBoard = (b: Pick<BoardDef, "chip"> | undefined | null) => b?.chip === "renode"
+
+// ── ATtiny85 (ATTinyCore, 8 MHz internal) on avr8js: port B; ADC0–3 = PB5, PB2, PB4, PB3 ──
+BOARDS.push({
+  id: "attiny85", type: "sb-attiny85", name: "ATtiny85", chip: "attiny85", fqbn: "ATTinyCore:avr:attinyx5:chip=85,clock=8internal",
+  coreUrl: "http://drazzy.com/package_drazzy.com_index.json", vcc: 5, power: { VCC: 5 }, firmware: "hex", flash: 0x2000, sram: 0x200, hz: 8e6,
+  pins: { PB0: p("B", 0), PB1: p("B", 1), PB2: p("B", 2, 1), PB3: p("B", 3, 3), PB4: p("B", 4, 2), PB5: p("B", 5, 0) },
+  alias: {}, led: "PB1", size: { w: 60, h: 60 }, header: ["PB5", "PB3", "PB4", "GND", "PB0", "PB1", "PB2", "VCC"],
+})
 
 export const boardById = (id: string) => BOARDS.find((b) => b.id === id)
 export const boardByType = (type: string) => BOARDS.find((b) => b.type === type)
