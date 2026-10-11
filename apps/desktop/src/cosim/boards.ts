@@ -10,13 +10,25 @@ const SYMBOLS: [RegExp, string][] = [
   [/^MCU_Module:RaspberryPi_Pico(_W)?$/, "wokwi-pi-pico"],
 ]
 
-/** The emulated board a schematic part runs as, or null when the part isn't programmable. */
-export function boardOf(part: Pick<Part, "lib">): BoardDef | null {
-  for (const [re, type] of SYMBOLS) if (re.test(part.lib)) return boardByType(type) ?? null
+/**
+ * Raspberry Pi 40-pin header symbols run Linux (src/linux/): the Value picks the model —
+ * Raspberry_Pi_4 is a Pi 4B ("Pi 5" in the Value makes it a Pi 5), Raspberry_Pi_2_3 a Pi 3B+
+ * ("Zero 2" makes it a Pi Zero 2 W).
+ */
+function linuxBoard(part: Pick<Part, "lib"> & { value?: string }): BoardDef | null {
+  const v = (part.value ?? "").toLowerCase()
+  if (part.lib === "Connector:Raspberry_Pi_4") return boardByType(/\b(pi\s*)?5\b/.test(v) ? "sb-raspberry-pi-5" : "sb-raspberry-pi-4") ?? null
+  if (part.lib === "Connector:Raspberry_Pi_2_3") return boardByType(/zero/.test(v) ? "sb-raspberry-pi-zero-2w" : "sb-raspberry-pi-3") ?? null
   return null
 }
 
-export const isProgrammable = (part: Pick<Part, "lib">) => boardOf(part) !== null
+/** The emulated board a schematic part runs as, or null when the part isn't programmable. */
+export function boardOf(part: Pick<Part, "lib"> & { value?: string }): BoardDef | null {
+  for (const [re, type] of SYMBOLS) if (re.test(part.lib)) return boardByType(type) ?? null
+  return linuxBoard(part)
+}
+
+export const isProgrammable = (part: Pick<Part, "lib"> & { value?: string }) => boardOf(part) !== null
 
 /** The programmable parts of a circuit, one per reference. */
 export function boardParts(doc: Pick<Doc, "parts">): { part: Part; board: BoardDef }[] {
@@ -57,6 +69,8 @@ export function pinRole(board: BoardDef, name: string): PinRole | null {
     if (m && board.pins[`A${m[1]}`]) return { k: "io", pin: `A${m[1]}` }
     m = /^GPIO(\d+)/.exec(part)
     if (m && board.pins[`GP${m[1]}`]) return { k: "io", pin: `GP${m[1]}` }
+    // the Pi 4 symbol zero-pads ("SDA_I2C1/GPIO02")
+    if (m && board.pins[`GPIO${Number(m[1])}`]) return { k: "io", pin: `GPIO${Number(m[1])}` }
   }
   return null
 }
@@ -76,8 +90,25 @@ export const PULLUP_R = 35e3
 export const PULLDOWN_R = 50e3
 export const SUPPLY_R = 0.05
 
+/** A program to start from when a Linux board is placed. */
+export function starterPython(board: BoardDef): string {
+  return `# ${board.name} — this program runs on the board in the schematic (Linux, Python 3).
+# gpiozero drives the GPIO pins; the circuit's voltages are what the inputs read.
+from gpiozero import LED
+from time import sleep
+
+led = LED(17)          # GPIO17 = header pin 11
+
+while True:
+    led.toggle()
+    print("LED", "on" if led.is_lit else "off")
+    sleep(0.5)
+`
+}
+
 /** A sketch to start from when a board is placed. */
 export function starterSketch(board: BoardDef): string {
+  if (board.chip === "linux") return starterPython(board)
   return `// ${board.name} — this sketch runs on the board in the schematic.
 // Its pins drive the circuit, and the circuit's voltages are what it reads.
 

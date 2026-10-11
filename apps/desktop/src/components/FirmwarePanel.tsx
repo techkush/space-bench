@@ -34,11 +34,13 @@ export function FirmwarePanel({ doc, boards, active, setActive, onChange, cosim,
 
   useEffect(() => { serialEnd.current?.scrollIntoView({ block: "end" }) }, [serial])
   useEffect(() => { if (build && !build.ok) setBottom("output") }, [build])
-  useEffect(() => { setFile("sketch.ino") }, [cur?.ref])
+  useEffect(() => { setFile(cur?.board.chip === "linux" ? "main.py" : "sketch.ino") }, [cur?.ref]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!cur || !fw) return null
-  const files = [...fw.files.map((f) => f.name), "libraries.txt"]
-  const isLibs = file === "libraries.txt"
+  const linux = cur.board.chip === "linux"
+  // Linux boards run Python (packages come from pip in the Terminal); sketches have libraries.txt
+  const files = linux ? fw.files.map((f) => f.name) : [...fw.files.map((f) => f.name), "libraries.txt"]
+  const isLibs = !linux && file === "libraries.txt"
   const content = isLibs ? fw.libraries ?? "" : fw.files.find((f) => f.name === file)?.content ?? ""
   const setContent = (v: string) => onChange(cur.ref, isLibs ? { ...fw, libraries: v } : { ...fw, files: fw.files.map((f) => (f.name === file ? { ...f, content: v } : f)) })
 
@@ -88,7 +90,7 @@ export function FirmwarePanel({ doc, boards, active, setActive, onChange, cosim,
       </div>
       <div className="min-h-0 flex-1">
         <Suspense fallback={<div className="flex h-full items-center justify-center text-xs text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" />Loading the editor…</div>}>
-          <SketchEditor path={`${cur.ref}/${file}`} language={isLibs ? "plaintext" : "cpp"} value={content} onChange={setContent} dark={dark}
+          <SketchEditor path={`${cur.ref}/${file}`} language={isLibs ? "plaintext" : file.endsWith(".py") ? "python" : "cpp"} value={content} onChange={setContent} dark={dark}
             diagnostics={isLibs ? [] : (build?.diagnostics ?? []).filter((d) => d.file === file)} />
         </Suspense>
       </div>

@@ -9,6 +9,7 @@ import { boardParts, starterSketch } from "./boards"
 import { localChip, type ChipLink } from "./chip"
 import { CoSim, type CoSimFrame } from "./cosim"
 import { workerChip } from "./workerChip"
+import { linuxChip } from "@/linux/chip"
 
 export type CoSimStatus = "idle" | "compiling" | "starting" | "running" | "error"
 
@@ -24,7 +25,7 @@ export interface BoardBuild {
 
 /** A board's sketch: the one saved in the circuit, or the starter sketch. */
 export function firmwareOf(doc: Pick<Doc, "firmware">, ref: string, board: BoardDef): Firmware {
-  return doc.firmware?.[ref] ?? { files: [{ name: "sketch.ino", content: starterSketch(board) }] }
+  return doc.firmware?.[ref] ?? { files: [{ name: board.chip === "linux" ? "main.py" : "sketch.ino", content: starterSketch(board) }] }
 }
 
 const SERIAL_KEEP = 20_000
@@ -52,6 +53,13 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
     if (!b) throw new Error(`${ref} isn't a programmable board`)
     const fw = firmwareOf(docRef.current, ref, b.board)
     const key = JSON.stringify([b.board.fqbn, fw])
+    // Linux boards run Python: nothing to compile
+    if (b.board.chip === "linux") {
+      const build: BoardBuild = { ok: true, log: "Python runs as it is on the board — nothing to compile.", diagnostics: [], key, firmware: null }
+      buildCache.current[ref] = build
+      setBuilds((m) => ({ ...m, [ref]: build }))
+      return build
+    }
     const cached = buildCache.current[ref]
     if (cached?.ok && cached.key === key) return cached
     const out = await compileSketch(fw.files, b.board.fqbn, parseLibraries(fw.libraries ?? ""), cb.current.cliBin || undefined, b.board.buildProps)
@@ -98,8 +106,11 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
         built.push(r)
       }
       setStatus("starting")
+      const linux = boards.filter((b) => b.board.chip === "linux")
+      if (linux.length > 1) { fail(`Only one Linux board can run at a time (${linux.map((b) => b.part.ref).join(", ")}).`); return }
       for (const [i, b] of boards.entries()) {
-        chips.push(typeof Worker === "undefined" ? localChip(b.board, built[i].firmware!) : await workerChip(b.board, built[i].firmware!))
+        if (b.board.chip === "linux") chips.push(await linuxChip(b.board, firmwareOf(docRef.current, b.part.ref, b.board)))
+        else chips.push(typeof Worker === "undefined" ? localChip(b.board, built[i].firmware!) : await workerChip(b.board, built[i].firmware!))
       }
       if (my !== token.current) { chips.forEach((c) => c.dispose()); return }
       let n = 0

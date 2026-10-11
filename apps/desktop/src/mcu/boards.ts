@@ -13,14 +13,15 @@ export interface BoardDef {
   /** wokwi diagram part type */
   type: string
   name: string
-  chip: "atmega328p" | "atmega2560" | "rp2040" | "esp32"
+  chip: "atmega328p" | "atmega2560" | "rp2040" | "esp32" | "linux"
   fqbn: string
   /** logic supply: output high, pull-ups, ADC reference */
   vcc: number
   /** power pins and their volts (GND is 0 V) */
   power: Record<string, number>
   /** what the compiler hands the emulator */
-  firmware: "hex" | "bin" | "image"
+  /** "python": a Linux board — the files are copied into the VM and main.py runs (no compiler) */
+  firmware: "hex" | "bin" | "image" | "python"
   /** extra arduino-cli build properties (the ESP32 bridge links with --wrap=ledcWrite) */
   buildProps?: string[]
   /** board-manager URL for its core, when it isn't in Arduino's own index */
@@ -40,6 +41,8 @@ export interface BoardDef {
   header?: string[]
   /** another maker's board on the same chip (the id of the board it's built like) */
   variantOf?: string
+  /** Linux boards: the Raspberry Pi model the VM identifies as (linux-guest/spacebench-identity) */
+  linux?: "pi5" | "pi4" | "pi3" | "zero2w"
 }
 
 const p = (port: PortName, bit: number, adc?: number): BoardPin => (adc === undefined ? { port, bit } : { port, bit, adc })
@@ -154,6 +157,24 @@ BOARDS.push(
   variant(nano, { id: "beetleble", type: "sb-beetle-ble", name: "Beetle BLE", fqbn: "arduino:avr:uno" }),
   variant(nano, { id: "romeoblemini", type: "sb-romeo-ble-mini", name: "Romeo BLE mini", fqbn: "arduino:avr:uno" }),
 )
+
+// ── Linux boards: Raspberry Pi OS-compatible Linux in a VM (src/linux/), GPIO0–27 on the 40-pin header ──
+/** The 40-pin header in physical order (pin 1 = 3V3 … pin 40 = GPIO21); repeated power pins get .n */
+export const PI_HEADER = ["3V3.1", "5V.1", "GPIO2", "5V.2", "GPIO3", "GND.1", "GPIO4", "GPIO14", "GND.2", "GPIO15", "GPIO17", "GPIO18", "GPIO27", "GND.3", "GPIO22", "GPIO23", "3V3.2", "GPIO24", "GPIO10", "GND.4",
+  "GPIO9", "GPIO25", "GPIO11", "GPIO8", "GND.5", "GPIO7", "GPIO0", "GPIO1", "GPIO5", "GND.6", "GPIO6", "GPIO12", "GPIO13", "GND.7", "GPIO19", "GPIO16", "GPIO26", "GPIO20", "GND.8", "GPIO21"]
+const piGpio: Record<string, BoardPin> = Object.fromEntries(Array.from({ length: 28 }, (_, i) => [`GPIO${i}`, { bit: i }]))
+const piAlias: Record<string, string> = Object.fromEntries(PI_HEADER.filter((n) => n.includes(".")).map((n) => [n, n.split(".")[0]]))
+const linuxBoard = (id: string, name: string, linux: NonNullable<BoardDef["linux"]>, sram: number): BoardDef => ({
+  id, type: id === "zero2w" ? "sb-raspberry-pi-zero-2w" : `sb-raspberry-${id.replace(/^pi/, "pi-")}`, name, chip: "linux", fqbn: "", vcc: 3.3, power: { "5V": 5, "3V3": 3.3 }, firmware: "python",
+  flash: 0, sram, hz: 1e9, pins: piGpio, alias: piAlias, led: "", size: { w: 230, h: 150 }, header: PI_HEADER, linux,
+})
+BOARDS.push(
+  linuxBoard("pi5", "Raspberry Pi 5", "pi5", 4096 << 20),
+  linuxBoard("pi4", "Raspberry Pi 4B", "pi4", 4096 << 20),
+  linuxBoard("pi3", "Raspberry Pi 3B+", "pi3", 1024 << 20),
+  linuxBoard("zero2w", "Raspberry Pi Zero 2 W", "zero2w", 512 << 20),
+)
+export const isLinuxBoard = (b: Pick<BoardDef, "chip"> | undefined | null) => b?.chip === "linux"
 
 export const boardById = (id: string) => BOARDS.find((b) => b.id === id)
 export const boardByType = (type: string) => BOARDS.find((b) => b.type === type)
