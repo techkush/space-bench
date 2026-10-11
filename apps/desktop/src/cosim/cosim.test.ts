@@ -11,6 +11,7 @@ import { remap, type JobResult } from "@/lib/engine"
 import { getSymbol, loadSymbol, setLoader } from "@/lib/kicad"
 import { buildNetlist, type SpiceNetlist } from "@/lib/spice"
 import { deriveNetlist } from "@/editor/netlist"
+import { loadExample } from "@/editor/examples"
 import { boardByType } from "@/mcu/boards"
 import { boardOf, boardParts, pinRole } from "./boards"
 import { localChip } from "./chip"
@@ -27,7 +28,7 @@ function build(code: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sbcosim-"))
   const sk = path.join(dir, "sketch"); fs.mkdirSync(sk)
   fs.writeFileSync(path.join(sk, "sketch.ino"), code)
-  execFileSync(cli!, ["compile", "--fqbn", "arduino:avr:uno", "--build-path", path.join(os.tmpdir(), "sbtest-build-arduino_avr_uno"), "--output-dir", path.join(dir, "out"), sk], { encoding: "utf8" })
+  execFileSync(cli!, ["compile", "--fqbn", "arduino:avr:uno", "--build-path", path.join(os.tmpdir(), "sbcosim-build-uno"), "--output-dir", path.join(dir, "out"), sk], { encoding: "utf8" })
   return fs.readFileSync(path.join(dir, "out", "sketch.ino.hex"), "utf8")
 }
 
@@ -121,6 +122,19 @@ void loop() { delay(100); Serial.println(analogRead(A0)); }`)
     expect(reads[0]).toBeLessThan(reads[reads.length - 1])
     expect(reads[reads.length - 1]).toBeGreaterThan(480)
     expect(reads[reads.length - 1]).toBeLessThan(545)
+  })
+
+  it("the Arduino PWM DAC example runs its own sketch", async () => {
+    const doc = await loadExample("arduino-pwm-dac")
+    const [b] = boardParts(doc)
+    const hex = build(doc.firmware![b.part.ref].files[0].content)
+    const sim = new CoSim(doc, [{ ref: b.part.ref, board: b.board, chip: localChip(b.board, hex) }], simulate)
+    let serial = ""
+    while (sim.t < 0.6) serial += (await sim.step()).serial[b.part.ref]
+    const volts = [...serial.matchAll(/A0 = ([\d.]+) V/g)].map((m) => Number(m[1]))
+    expect(volts.length).toBeGreaterThan(5)
+    // the duty ramps up 5 per 50 ms, so the filtered voltage climbs
+    expect(volts[volts.length - 1]).toBeGreaterThan(volts[1])
   })
 
   it("the circuit decides what the sketch reads, the sketch lights the LED", async () => {

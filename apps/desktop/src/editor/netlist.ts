@@ -144,6 +144,8 @@ export function deriveNetlist(doc: Doc): Netlist {
   const noConnect = new Set((doc.noConnects ?? []).map(key))
   for (const p of pins) {
     if (isVirtual(p.part) || noConnect.has(key(p.at)) || p.pin.t === "no_connect" || p.pin.t === "unspecified" && p.part.lib.startsWith("Connector")) continue
+    // a development board (Arduino, Pico) is a header: most of its pins are unused on purpose
+    if (p.part.lib.startsWith("MCU_Module:")) continue
     const touched = wireEnds.has(key(p.at)) || doc.wires.some((w) => onSegment(p.at, w.a, w.b))
     if (members.get(uf.find(key(p.at))) === 1 && !touched) {
       const ref = displayRef(p.part)

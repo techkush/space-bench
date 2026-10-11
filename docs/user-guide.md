@@ -182,6 +182,29 @@ current, power and a stress check against its ratings with derating (green < 90 
 90–100 %, red > 100 %, like PSpice Smoke); plots of each feed and of chosen signals; CSV export.
 The AI can feed inputs too (`set_stimulus`).
 
+## Circuit + firmware in one workspace
+
+Put an Arduino in the schematic and simulate it with its sketch:
+
+1. Place **Arduino_UNO_R3**, **Arduino_Nano_v3.x** or **RaspberryPi_Pico** from the part browser
+   (library `MCU_Module`) and wire its pins like any other part — `D9`, `A0`, `+5V`, `GND` …
+   (Kirk: `A1 = lib("MCU_Module:Arduino_UNO_R3")`, then `A1.D9 -- R1 -- OUT`).
+2. The **Firmware** panel opens beside the drawing with a starter sketch. Edit `sketch.ino`; list
+   libraries in `libraries.txt`. Select a board in the schematic to show its sketch.
+3. Press **Run** (or **Simulate** with a Transient analysis). The sketches compile with
+   arduino-cli, then the firmware and the circuit run together: the scope, meters, wire colours
+   and LEDs update live and the **Serial Monitor** shows what the sketch prints (type a line to
+   send it). **Stop** keeps the last two seconds on screen.
+
+How it works: the chips run 20 ms at a time; every pin edge becomes a source on that pin (25 Ω
+output, internal pull-ups), ngspice simulates the circuit over the same 20 ms starting from where
+the last frame ended, and the voltages at the input and ADC pins are what the sketch reads next.
+Outputs are exact to the edge; inputs see the circuit one frame late. Without a running sketch
+(AC, DC sweep, OP) the board is just its 5 V / 3.3 V supplies.
+
+Try **Examples → Microcontrollers → Arduino PWM DAC**: the Uno sweeps PWM through an RC filter
+and reads the voltage back on A0.
+
 ## Microcontrollers (Arduino)
 
 Start screen → **Microcontrollers** (or ⌘⇧A): an Arduino workspace in the style of

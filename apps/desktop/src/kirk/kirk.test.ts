@@ -38,7 +38,7 @@ describe("lexer", () => {
 
 describe("parser", () => {
   it("parses the spec's first example without errors", () => {
-    const src = fs.readFileSync(path.resolve(import.meta.dirname, "../../../../../docs/kirk-language-spec.md"), "utf8")
+    const src = fs.readFileSync(path.resolve(import.meta.dirname, "../../../../docs/kirk-language-spec.md"), "utf8")
     const code = /```kirk\n([\s\S]*?)```/.exec(src)![1]
     const { file, diagnostics } = parse(code)
     expect(diagnostics).toEqual([])

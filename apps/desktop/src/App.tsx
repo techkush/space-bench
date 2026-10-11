@@ -56,6 +56,9 @@ import { isSensor, senseOf } from "@/editor/inputs"
 import type { AgentHost } from "@/lib/ai/agent"
 import { summarizeResult } from "@/lib/ai/summary"
 import { usePlayback, valuesAt } from "@/lib/playback"
+import { FirmwarePanel } from "@/components/FirmwarePanel"
+import { boardParts, isProgrammable } from "@/cosim/boards"
+import { useCoSim } from "@/cosim/useCoSim"
 import { buildNetlist, resolveSim, setSolverOptions } from "@/lib/spice"
 import { explainFailure, refsInMessage, stamp, startRun, type RunHandle, type SpanStatus } from "@/lib/runlog"
 import { RunView } from "@/components/RunView"
@@ -262,6 +265,21 @@ export default function App() {
   const docForCode = useMemo(() => ({ ...doc, probes, dmm: dmm ?? undefined }), [doc, probes, dmm])
   const latestDoc = useRef(doc)
   latestDoc.current = doc
+
+  // ---- circuit + firmware: Arduino / Pico boards in the schematic run their sketches (cosim/)
+  const boards = useMemo(() => boardParts(doc).map((b) => ({ ref: b.part.ref, board: b.board })), [doc.parts])
+  const [fwOpen, setFwOpen] = useState(false)
+  const [fwActive, setFwActive] = useState<string | null>(null)
+  const [fwW, setFwW] = usePaneSize("sb-firmware-width", 520)
+  const hadBoards = useRef(false)
+  /** the last co-simulation window: after Stop it holds still instead of playing back */
+  const cosimWindow = useRef<JobResult | null>(null)
+  useEffect(() => { if (boards.length && !hadBoards.current) setFwOpen(true); hadBoards.current = boards.length > 0 }, [boards.length])
+  const cosim = useCoSim({
+    doc, cliBin: settings.arduinoCliPath,
+    onFrame: (f) => { cosimWindow.current = f.window; setResult(f.window); setOpValues(f.avg); setError(null) },
+    onError: (msg) => { setError(msg); toast.error(`Circuit + firmware stopped: ${msg.split("\n")[0]}`) },
+  })
 
   // ---- projects (lib/project.ts): the open project, its circuit file, the user's libraries folder
   const [project, setProject] = useState<Project | null>(null)
@@ -781,13 +799,14 @@ export default function App() {
   // a freshly opened circuit starts paused: real-time re-runs wait for ▶ or Simulate
   const [paused, setPaused] = useState(true)
   useEffect(() => {
-    if (!live || paused) return
+    if (!live || paused || cosim.active) return
     const h = setTimeout(() => { if (!holdLive.current) run(doc, analysis, true) }, 200)
     return () => clearTimeout(h)
-  }, [doc, analysis, live, paused, run])
+  }, [doc, analysis, live, paused, run, cosim.active])
 
   // ---- document actions
   const loadDoc = (d: Doc, p: string | null, fit: string, id?: string) => {
+    cosim.stop()
     if (hasDoc) rememberCurrent()
     // a circuit that isn't part of the open project closes the project
     if (!id?.startsWith("prj:")) { setProject(null); setCircuitFile(null) }
@@ -1230,7 +1249,8 @@ export default function App() {
 
   const part = selection.parts.size === 1 ? doc.parts.find((p) => selection.parts.has(p.id)) ?? null : null
   useEffect(() => { if (part) setAside("inspector") }, [part?.id]) // eslint-disable-line react-hooks/exhaustive-deps
-  const playback = usePlayback(result, live)
+  useEffect(() => { if (part && isProgrammable(part)) { setFwActive(part.ref); setFwOpen(true) } }, [part?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const playback = usePlayback(result, live && !cosim.active && result !== cosimWindow.current)
   useEffect(() => { playback.setSpeed(settings.playbackSpeed) }, [settings.playbackSpeed]) // eslint-disable-line react-hooks/exhaustive-deps
   const tranResult = result?.type === "tran" ? result : null
   const shownValues = useMemo(() => {
@@ -1386,13 +1406,14 @@ export default function App() {
           onUndo={history.undo} onRedo={history.redo} canUndo={history.canUndo} canRedo={history.canRedo}
           hasSelection={selection.parts.size + selection.wires.size > 0}
           errors={errors.length} warnings={issues.length - errors.length}
-          analysis={analysis} setAnalysis={setAnalysis} running={running} onRun={() => { setPaused(false); runMany(doc, analysis) }}
+          analysis={analysis} setAnalysis={setAnalysis} running={running || cosim.active}
+          onRun={() => { if (boards.length && analysis === "tran") { setFwOpen(true); cosim.start(); return } setPaused(false); runMany(doc, analysis) }}
           analysisDetail={{ tran: formatSI(doc.analyses.tran.stop, "s"), ac: `${formatSI(doc.analyses.ac.start, "Hz")}–${formatSI(doc.analyses.ac.stop, "Hz")}`, op: "", dc: doc.analyses.dc?.source ?? "" }}
           onSetup={() => setSetupDlg({ open: true, section: analysis })} hasDc={!!doc.analyses.dc} progress={progress}
           mode={mode} setMode={setMode} clock={playback.t} playing={playback.playing}
           onPlayPause={togglePlay}
-          onStop={() => { stopRun(); playback.stop() }}
-          canStop={running || playback.t !== null}
+          onStop={() => { stopRun(); cosim.stop(); playback.stop() }}
+          canStop={running || cosim.active || playback.t !== null}
           onShowIssues={() => setTab("log")}
           onQuickPlace={(id) => startPlace(id)}
         />
@@ -1457,6 +1478,12 @@ export default function App() {
                 className="absolute right-3 top-3 z-10 hidden rounded-md border bg-background/90 px-2.5 py-1 text-xs text-muted-foreground whitespace-nowrap shadow-sm backdrop-blur hover:text-foreground md:block">
                 <span className="font-medium text-foreground">Root sheet</span> · {electrical} part{electrical === 1 ? "" : "s"} · {netlist.nets.length} nets · {fgFlag.length + probes.length + (dmm && !probes.includes(dmm) ? 1 : 0) + (lastAc ? 1 : 0)} instruments
               </button>
+              {boards.length > 0 && !fwOpen && (
+                <button onClick={() => setFwOpen(true)} title="Show the boards' sketches"
+                  className="absolute right-3 top-12 z-10 hidden rounded-md border bg-background/90 px-2.5 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur hover:text-foreground md:block">
+                  <span className="font-medium text-foreground">Firmware</span> · {boards.map((b) => b.ref).join(", ")}
+                </button>
+              )}
               <SchematicEditor
                 doc={doc} netlist={netlist} values={shownValues} live={!error && Object.keys(shownValues).length > 0}
                 wireFlow={wireFlow} overlays={overlays} setOverlays={setOverlays} probeFlags={probeFlags} inputs={inputChips} series={series}
@@ -1478,6 +1505,16 @@ export default function App() {
                 netlist={netlist} lastAc={lastAc} onSweepAc={sweepAc} sweeping={sweeping} /></ErrorBoundary>
             </div>
           </main>
+          {fwOpen && boards.length > 0 && view !== "code" && (
+            <>
+              <Splitter axis="x" onDrag={(d) => setFwW((w) => clamp(w - d, 360, window.innerWidth - 560))} onReset={() => setFwW(520)} />
+              <div className="flex shrink-0 flex-col" style={{ width: clamp(fwW, 360, window.innerWidth - 560) }}>
+                <ErrorBoundary name="firmware panel"><FirmwarePanel doc={doc} boards={boards} active={fwActive} setActive={setFwActive}
+                  onChange={(ref, fw) => history.replace((d) => ({ ...d, firmware: { ...d.firmware, [ref]: fw } }))}
+                  cosim={cosim} dark={dark} onClose={() => setFwOpen(false)} /></ErrorBoundary>
+              </div>
+            </>
+          )}
           <aside className={view !== "code" && (part || panelPinned) ? "flex w-[340px] shrink-0 flex-col border-l" : "hidden"}>
             <div className="flex shrink-0 items-center gap-1 border-b p-1.5">
               {([["inspector", part ? part.ref : "Inspector"], ["instruments", "Instruments & data"]] as const).map(([k, l]) => (
@@ -1499,7 +1536,7 @@ export default function App() {
             </div>
           </aside>
         </div>
-        <StatusBar onStatus={() => { setAnalysisOpen(false); setRunView(null); setRunOpen(true) }} text={running ? "Simulating…" : errors.length ? `${errors.length} ERC error${errors.length > 1 ? "s" : ""}` : error ? "Last run failed" : playback.playing ? "Simulating · real-time playback" : result ? "Ready" : "Idle"}
+        <StatusBar onStatus={() => { setAnalysisOpen(false); setRunView(null); setRunOpen(true) }} text={cosim.status === "running" ? "Simulating · circuit + firmware" : running ? "Simulating…" : errors.length ? `${errors.length} ERC error${errors.length > 1 ? "s" : ""}` : error ? "Last run failed" : playback.playing ? "Simulating · real-time playback" : result ? "Ready" : "Idle"}
           nodes={netlist.nets.length} parts={electrical} ms={ms} path={path} engine={engine} warnings={issues.length - errors.length}
           step={analysis === "tran" ? formatSI(doc.analyses.tran.step, "s") : null} hover={hoverText} zoom={zoom} />
       </div>

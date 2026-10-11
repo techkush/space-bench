@@ -228,9 +228,32 @@ Use ngspice's XSPICE digital models ([XSPICE](https://ngspice.sourceforge.io/xsp
 74xx / 4000 gates, flip-flops, counters, ADC/DAC bridges. Logic analyzer reads real
 digital nodes; Kirk `digital { }` block.
 
-### 3.2 ☐ Arduino / AVR
+### 3.2 ◐ Arduino / AVR — circuit + firmware in one workspace (branch `all-in-one-workspace`, 2026-10-11)
 Write a sketch (or Kirk `firmware { }`), compile with avr-gcc, run on the AVR model coupled
 to the analog circuit; serial monitor; LED / button / sensor parts from 1.2 connect to pins.
+
+Done:
+- KiCad `MCU_Module:Arduino_UNO_R2/R3`, `Arduino_Nano_v2.x/v3.x` and `RaspberryPi_Pico(_W)` are
+  programmable parts (`src/cosim/boards.ts`): symbol pin names map to chip pins (D13 → 13,
+  SDA/A4 → A4, GPIO26_ADC0 → GP26), +5V / 3V3 / IOREF / VBUS are supplies (50 mΩ), GND is ground.
+  A plain run sees the board as its supplies; unused header pins don't raise ERC warnings.
+- Each board's sketch is saved in the circuit (`doc.firmware[ref]`), kept across Kirk edits.
+- Lockstep co-simulation (`src/cosim/cosim.ts`): the chips run a 20 ms frame (avr8js / rp2040js in
+  one worker per board, `chip.worker.ts`); their pin edges become PWL sources behind 25 Ω, pull-ups
+  35 kΩ / pull-downs 50 kΩ, and a behavioural source when a pin changes between input and output;
+  ngspice runs the frame from the previous node voltages (`.ic`); input pins read the end
+  voltages with Schmitt thresholds (0.3 / 0.6 Vcc), ADC pins their volts. Pins with > 400 edges in
+  a frame are averaged.
+- UI: Firmware panel next to the schematic (sketch, libraries.txt, Compile, Run/Stop, Serial
+  Monitor, compiler output); Simulate runs circuit + firmware when the circuit has a board and the
+  analysis is Transient. The scope / wires / LEDs show a rolling 2 s window and the frame averages.
+- Example "Arduino PWM DAC"; tests `src/cosim/cosim.test.ts` (PWM → RC → A0 ≈ 512; INPUT_PULLUP vs
+  1 kΩ reads LOW and lights an LED at ~12 mA; the example runs its own sketch).
+
+Not yet: Kirk `firmware { }`; ESP32 (QEMU) and the catalogue's other boards in schematics;
+inputs read within the same frame (now one frame late); inductor current across frames; I²C/SPI
+devices drawn as schematic parts (they need bus models on the ngspice side); speed — in the
+browser (ngspice per frame over the dev server) ~30 % of real time.
 
 ---
 
