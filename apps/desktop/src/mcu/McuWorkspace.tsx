@@ -675,9 +675,13 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
 
         {/* editor */}
         <div className="flex min-w-0 shrink-0 flex-col" style={{ width: editorW }}>
-          <div className="flex h-9 shrink-0 items-end gap-0.5 overflow-x-auto border-b bg-sidebar px-1">
+          {/* no visible scrollbar: with macOS "always show scroll bars" it ate the strip's height and
+              pushed the tabs under the header; the strip still scrolls (wheel / trackpad) */}
+          <div className="flex h-9 shrink-0 items-end gap-0.5 overflow-x-auto overflow-y-hidden border-b bg-sidebar px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            onWheel={(e) => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY }}>
             {tabs.map((t) => (
-              <div key={t} className={cn("group flex h-8 items-center gap-1 rounded-t-md border-x border-t px-2.5 text-xs", active === t ? "border-border bg-background" : "border-transparent text-muted-foreground hover:text-foreground")}>
+              <div key={t} ref={(el) => { if (el && active === t) el.scrollIntoView({ block: "nearest", inline: "nearest" }) }}
+                className={cn("group flex h-8 shrink-0 items-center gap-1 rounded-t-md border-x border-t px-2.5 text-xs", active === t ? "border-border bg-background" : "border-transparent text-muted-foreground hover:text-foreground")}>
                 <button onClick={() => setActive(t)} className="font-mono">{t}</button>
                 {tabs.length > 1 && <button onClick={() => closeTab(t)} className="rounded opacity-0 hover:bg-accent group-hover:opacity-100"><X className="size-3" /></button>}
               </div>

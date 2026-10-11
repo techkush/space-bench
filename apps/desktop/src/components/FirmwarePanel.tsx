@@ -59,7 +59,7 @@ export function FirmwarePanel({ doc, boards, active, setActive, onChange, cosim,
       <div className="flex shrink-0 items-center gap-1.5 border-b px-2 py-1.5">
         <Cpu className="size-4 text-muted-foreground" />
         <span className="text-sm font-medium">Firmware</span>
-        <div className="ml-1 flex min-w-0 gap-1 overflow-x-auto">
+        <div className="ml-1 flex min-w-0 gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {boards.map((b) => (
             <button key={b.ref} onClick={() => setActive(b.ref)} title={b.board.name}
               className={`h-7 shrink-0 rounded-md px-2 text-xs ${b.ref === cur.ref ? "bg-accent font-medium" : "text-muted-foreground hover:text-foreground"}`}>
