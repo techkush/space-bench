@@ -9,7 +9,7 @@ use std::process::Command;
 pub struct SketchFile { pub name: String, pub content: String }
 
 #[derive(Serialize)]
-pub struct CompileResult { pub ok: bool, pub hex: Option<String>, pub bin: Option<String>, pub image: Option<String>, pub stdout: String, pub stderr: String, pub sketch_dir: String }
+pub struct CompileResult { pub ok: bool, pub hex: Option<String>, pub bin: Option<String>, pub image: Option<String>, pub elf: Option<String>, pub stdout: String, pub stderr: String, pub sketch_dir: String }
 
 fn runnable(p: &std::path::Path) -> bool {
   #[cfg(unix)]
@@ -109,7 +109,10 @@ pub fn compile(files: Vec<SketchFile>, fqbn: &str, props: &[String], custom: Opt
   let merged = out_dir.join("sketch.ino.merged.bin");
   let image = (ok && merged.exists()).then(|| merged.display().to_string());
   let bin = if ok && image.is_none() { std::fs::read(out_dir.join("sketch.ino.bin")).ok().map(|b| base64(&b)) } else { None };
-  Ok(CompileResult { ok: ok && (hex.is_some() || bin.is_some() || image.is_some()), hex, bin, image, stdout, stderr, sketch_dir: sketch.display().to_string() })
+  // Renode boards boot the ELF (with its symbols) from disk
+  let elf_path = out_dir.join("sketch.ino.elf");
+  let elf = (ok && elf_path.exists()).then(|| elf_path.display().to_string());
+  Ok(CompileResult { ok: ok && (hex.is_some() || bin.is_some() || image.is_some() || elf.is_some()), hex, bin, image, elf, stdout, stderr, sketch_dir: sketch.display().to_string() })
 }
 
 fn base64(data: &[u8]) -> String {

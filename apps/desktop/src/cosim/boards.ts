@@ -8,6 +8,9 @@ const SYMBOLS: [RegExp, string][] = [
   [/^MCU_Module:Arduino_UNO_R[23]$/, "wokwi-arduino-uno"],
   [/^MCU_Module:Arduino_Nano_v[23]\.x$/, "wokwi-arduino-nano"],
   [/^MCU_Module:RaspberryPi_Pico(_W)?$/, "wokwi-pi-pico"],
+  // bare STM32 chips run on Renode as the board built around them
+  [/^MCU_ST_STM32F4:STM32F407V(E|G|_E-G_)Tx$/, "sb-stm32f4-discovery"],
+  [/^MCU_ST_STM32F1:STM32F103C8Tx$/, "sb-stm32-blue-pill"],
 ]
 
 /**
@@ -57,13 +60,16 @@ export type PinRole =
  */
 export function pinRole(board: BoardDef, name: string): PinRole | null {
   const n = name.replace(/~\{([^}]*)\}/g, "$1").trim()
-  if (/^A?GND$/i.test(n)) return { k: "gnd" }
+  if (/^A?GND$/i.test(n) || /^VSSA?$/.test(n)) return { k: "gnd" }
   if (/^\+?5V$/i.test(n) || n === "VBUS") return { k: "supply", volts: 5 }
   if (n === "VSYS") return { k: "supply", volts: 5 }
   if (/^\+?3V3$/i.test(n)) return { k: "supply", volts: 3.3 }
   if (n === "IOREF") return { k: "supply", volts: board.vcc }
   for (const part of n.split("/")) {
-    let m = /^D(\d+)$/.exec(part)
+    // STM32 port pins: "PA0", "PD12"
+    let m = /^P([A-K])(\d+)$/.exec(part)
+    if (m && board.pins[`P${m[1]}${m[2]}`]) return { k: "io", pin: `P${m[1]}${m[2]}` }
+    m = /^D(\d+)$/.exec(part)
     if (m && board.pins[m[1]]) return { k: "io", pin: m[1] }
     m = /^A(\d+)$/.exec(part)
     if (m && board.pins[`A${m[1]}`]) return { k: "io", pin: `A${m[1]}` }

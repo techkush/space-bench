@@ -10,6 +10,8 @@ import { localChip, type ChipLink } from "./chip"
 import { CoSim, type CoSimFrame } from "./cosim"
 import { workerChip } from "./workerChip"
 import { linuxChip } from "@/linux/chip"
+import { renodeChip } from "@/renode/chip"
+import { renodeStage } from "@/renode/host"
 
 export type CoSimStatus = "idle" | "compiling" | "starting" | "running" | "error"
 
@@ -62,10 +64,13 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
     }
     const cached = buildCache.current[ref]
     if (cached?.ok && cached.key === key) return cached
-    const out = await compileSketch(fw.files, b.board.fqbn, parseLibraries(fw.libraries ?? ""), cb.current.cliBin || undefined, b.board.buildProps)
+    // Renode boards: the set-up the emulated chip needs goes in with the sketch
+    const files = [...fw.files, ...(b.board.renode?.sources ?? [])]
+    const out = await compileSketch(files, b.board.fqbn, parseLibraries(fw.libraries ?? ""), cb.current.cliBin || undefined, b.board.buildProps)
     const build: BoardBuild = {
       ok: out.ok, log: out.log, diagnostics: out.diagnostics, key, flash: out.flash,
-      firmware: b.board.firmware === "hex" ? out.hex : out.bin,
+      // Renode boots the ELF from disk: keep a copy the next compile won't delete
+      firmware: b.board.firmware === "hex" ? out.hex : b.board.firmware === "elf" ? (out.ok && out.elf ? await renodeStage(out.elf) : null) : out.bin,
     }
     if (build.ok && !build.firmware) { build.ok = false; build.log += "\nThe compiler produced no firmware image." }
     buildCache.current[ref] = build
@@ -108,8 +113,11 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
       setStatus("starting")
       const linux = boards.filter((b) => b.board.chip === "linux")
       if (linux.length > 1) { fail(`Only one Linux board can run at a time (${linux.map((b) => b.part.ref).join(", ")}).`); return }
+      const renode = boards.filter((b) => b.board.chip === "renode")
+      if (renode.length > 1) { fail(`Only one Renode board can run at a time (${renode.map((b) => b.part.ref).join(", ")}).`); return }
       for (const [i, b] of boards.entries()) {
         if (b.board.chip === "linux") chips.push(await linuxChip(b.board, firmwareOf(docRef.current, b.part.ref, b.board)))
+        else if (b.board.chip === "renode") chips.push(await renodeChip(b.board, built[i].firmware as string))
         else chips.push(typeof Worker === "undefined" ? localChip(b.board, built[i].firmware!) : await workerChip(b.board, built[i].firmware!))
       }
       if (my !== token.current) { chips.forEach((c) => c.dispose()); return }
