@@ -1,6 +1,7 @@
 mod arduino;
 mod esp32;
 mod linux;
+mod renode;
 mod claude_code;
 mod ngspice;
 mod ngspice_lib;
@@ -128,6 +129,20 @@ fn linux_qmp(cmd: String) -> Result<(), String> { linux::qmp_cmd(&cmd) }
 #[tauri::command]
 fn linux_stop() { linux::stop() }
 
+/// Renode boards (STM32 / nRF52) — see renode.rs.
+#[tauri::command]
+async fn renode_status() -> Option<String> { tauri::async_runtime::spawn_blocking(renode::status).await.unwrap_or(None) }
+#[tauri::command]
+async fn renode_install() -> Result<Option<String>, String> { tauri::async_runtime::spawn_blocking(renode::install).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+async fn renode_start(helper: String) -> Result<String, String> { tauri::async_runtime::spawn_blocking(move || renode::start(&helper)).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+async fn renode_cmd(line: String) -> Result<String, String> { tauri::async_runtime::spawn_blocking(move || renode::cmd(&line)).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+fn renode_stage(elf: String) -> Result<String, String> { renode::stage(&elf) }
+#[tauri::command]
+fn renode_stop() { renode::stop() }
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -153,7 +168,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![simulate, ngspice_run, ngspice_halt, ngspice_alter, ngspice_lib_path, ngspice_version, ngspice_path, claude_code_run, claude_code_cancel, claude_code_version, arduino_compile, arduino_status, arduino_install_core, esp32_status, esp32_install, esp32_start, esp32_poll, esp32_send, esp32_stop, linux_status, linux_fetch, linux_disk, linux_save, linux_start, linux_poll, linux_send, linux_qmp, linux_stop])
+    .invoke_handler(tauri::generate_handler![simulate, ngspice_run, ngspice_halt, ngspice_alter, ngspice_lib_path, ngspice_version, ngspice_path, claude_code_run, claude_code_cancel, claude_code_version, arduino_compile, arduino_status, arduino_install_core, esp32_status, esp32_install, esp32_start, esp32_poll, esp32_send, esp32_stop, linux_status, linux_fetch, linux_disk, linux_save, linux_start, linux_poll, linux_send, linux_qmp, linux_stop, renode_status, renode_install, renode_start, renode_cmd, renode_stage, renode_stop])
     .run(tauri::generate_context!())
     .expect("error while building tauri application");
 }

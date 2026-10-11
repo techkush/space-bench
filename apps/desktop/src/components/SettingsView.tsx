@@ -377,6 +377,7 @@ function Mcu({ s }: { s: Settings }) {
       </Card>
       <QemuCard s={s} />
       <LinuxCard />
+      <RenodeCard />
       <Card title="Emulator">
         <Row label="Speed" hint="1× is real time: delay(1000) takes one second. Slower speeds help watch fast signals.">
           <Select value={String(s.mcuSpeed)} onValueChange={(v) => setSettings({ mcuSpeed: Number(v) })}>
@@ -403,6 +404,26 @@ function QemuCard({ s }: { s: Settings }) {
       action={isTauri() && !st ? <Button size="sm" disabled={busy} onClick={async () => { setBusy(true); try { const m = await import("@/mcu/esp32/host"); setSt(await m.installQemu()); toast.success("QEMU installed") } catch (e) { toast.error(String(e instanceof Error ? e.message : e)) } finally { setBusy(false) } }}>{busy && <Loader2 className="animate-spin" />}Install (≈4 MB)</Button> : <Button variant="outline" size="sm" onClick={check}>Check</Button>}>
       <Row label="qemu-system-xtensa" hint={st ?? (st === null ? err : "Looking in PATH and ~/.espressif/tools…")}>
         <Input className="w-[320px] font-mono" placeholder="Automatic" value={s.esp32QemuPath} onChange={(e) => setSettings({ esp32QemuPath: e.target.value })} />
+      </Row>
+    </Card>
+  )
+}
+
+/** STM32 / nRF52 boards on Antmicro's Renode (src/renode/). */
+function RenodeCard() {
+  const [st, setSt] = useState<string | null | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  const check = () => { setSt(undefined); import("@/renode/host").then((m) => m.renodeStatus()).then(setSt).catch(() => setSt(null)) }
+  useEffect(check, [])
+  const install = async () => {
+    setBusy(true)
+    try { const m = await import("@/renode/host"); setSt(await m.installRenode()); toast.success("Renode installed") } catch (e) { toast.error(String(e instanceof Error ? e.message : e)) } finally { setBusy(false) }
+  }
+  return (
+    <Card title="STM32 & nRF52 Emulator (Renode)" badge={st === undefined ? <Badge variant="outline">checking…</Badge> : st ? <Badge variant="secondary" className="bg-success-subtle text-success">found</Badge> : <Badge variant="outline">not found</Badge>}
+      action={isTauri() && !st ? <Button size="sm" disabled={busy} onClick={install}>{busy && <Loader2 className="animate-spin" />}Install (≈75 MB)</Button> : <Button variant="outline" size="sm" onClick={check}>Check</Button>}>
+      <Row label="Boards" hint={st ? `${st.split(" · ")[0]} — STM32F4 Discovery, STM32 Blue Pill and Arduino Nano 33 BLE run their real firmware (bare STM32F407 / F103 chips too, in schematics).` : "Antmicro's Renode (MIT) runs STM32 and nRF52 firmware. It needs the board's Arduino core (installed from the Microcontrollers page)."}>
+        <span className="max-w-[320px] truncate font-mono text-xs text-muted-foreground" title={st ?? ""}>{st?.split(" · ")[1] ?? ""}</span>
       </Row>
     </Card>
   )
