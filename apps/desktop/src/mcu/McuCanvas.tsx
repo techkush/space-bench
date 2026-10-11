@@ -507,7 +507,11 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
       onPointerDown={onBgDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp} onWheel={onWheel}
       onDragOver={(e) => { if (onDropPart && e.dataTransfer.types.includes(PART_DRAG)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy" } }}
       onDrop={(e) => { const t = e.dataTransfer.getData(PART_DRAG); if (!t || !onDropPart) return; e.preventDefault(); const w = toWorld(e.clientX, e.clientY); onDropPart(t, Math.round(w.x / 5) * 5, Math.round(w.y / 5) * 5) }}>
-      <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}>
+      {/* CSS zoom, not scale(): WebKit (the desktop app's web view) keeps a scaled layer at its
+          100 % bitmap and stretches it, so parts went blurry; zoom lays them out and draws them
+          at the zoomed size, sharp at any zoom */}
+      <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${view.x}px, ${view.y}px)` }}>
+      <div style={{ zoom: view.z }}>
         {[...diagram.parts.filter((p) => isBreadboard(p.type)), ...diagram.parts.filter((p) => !isBreadboard(p.type))].map((p) => (
           <div key={p.id} data-part={p.id} className={cn("absolute", selected === p.id && "outline outline-2 outline-offset-4 outline-primary/70 rounded-sm")}
             style={{ lineHeight: 0, left: p.left, top: p.top, transform: p.rotate ? `rotate(${p.rotate}deg)` : undefined, transformOrigin: "center", cursor: running && isInteractive(p.type) ? "pointer" : "move", display: p.hide ? "none" : undefined }}
@@ -557,6 +561,7 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
             )
           })
         })}
+      </div>
       </div>
 
       {hoverPin && (() => {
