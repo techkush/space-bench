@@ -127,6 +127,8 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
   const [wiring, setWiring] = useState<{ from: string; x: number; y: number } | null>(null)
   const [hoverPin, setHoverPin] = useState<string | null>(null)
   const [wireSel, setWireSel] = useState<number | null>(null)
+  /** where the selected wire was clicked (world units): its toolbar opens there */
+  const [wireAt, setWireAt] = useState<{ x: number; y: number } | null>(null)
   const drag = useRef<{ id: string; sx: number; sy: number; left: number; top: number; moved: boolean; carry: { id: string; left: number; top: number }[] } | null>(null)
   const pan = useRef<{ sx: number; sy: number; x: number; y: number } | null>(null)
   const active = useRef(new Map<string, boolean>())
@@ -533,7 +535,7 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
         ))}
         <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width={1} height={1}>
           {wires.map((w) => w && (
-            <g key={w.i} className="pointer-events-auto cursor-pointer" onPointerDown={(e) => { e.stopPropagation(); setWireSel(w.i); onSelect(null) }}>
+            <g key={w.i} className="pointer-events-auto cursor-pointer" onPointerDown={(e) => { e.stopPropagation(); setWireSel(w.i); setWireAt(toWorld(e.clientX, e.clientY)); onSelect(null) }}>
               <path d={w.d} fill="none" stroke="transparent" strokeWidth={8} />
               {wireSel === w.i && <path d={w.d} fill="none" stroke={dark ? "#fff" : "#000"} strokeOpacity={0.35} strokeWidth={6} strokeLinejoin="round" strokeLinecap="round" />}
               <path d={w.d} fill="none" stroke={wireCss(w.color)} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
@@ -580,14 +582,23 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
           <Button variant="ghost" size="icon-sm" title="Delete (⌫)" className="hover:text-destructive" onClick={() => remove(sel.id)}><Trash2 /></Button>
         </div>
       )}
-      {wireSel !== null && diagram.connections[wireSel] && (
-        <div className="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-popover px-2 py-1 shadow-md" onPointerDown={(e) => e.stopPropagation()}>
+      {/* the selected wire's toolbar: under the point where the wire was clicked, kept inside the canvas
+          (pinned to the top it covered the canvas's own buttons) */}
+      {wireSel !== null && diagram.connections[wireSel] && (() => {
+        const W = 330, hostW = host.current?.clientWidth ?? 800, hostH = host.current?.clientHeight ?? 600
+        const at = wireAt ?? { x: 0, y: 0 }
+        const left = Math.min(Math.max(8, view.x + at.x * view.z - W / 2), Math.max(8, hostW - W - 8))
+        const below = view.y + at.y * view.z + 14
+        const top = below + 70 > hostH ? view.y + at.y * view.z - 84 : below
+        return (
+        <div className="absolute z-10 flex flex-wrap items-center gap-1 rounded-lg border bg-popover px-2 py-1 shadow-md" style={{ left, top: Math.max(8, top), width: W }} onPointerDown={(e) => e.stopPropagation()}>
           <span className="mr-1 font-mono text-[11px] text-muted-foreground">{diagram.connections[wireSel][0]} → {diagram.connections[wireSel][1]}</span>
           {WIRE_COLORS.map((c) => <button key={c} title={c} className={cn("size-4 rounded-full ring-1 ring-border", diagram.connections[wireSel][2] === c && "ring-2 ring-primary")} style={{ background: wireCss(c) }}
             onClick={() => onChange({ ...diagram, connections: diagram.connections.map((w, i) => (i === wireSel ? [w[0], w[1], c, w[3]] as Connection : w)) }, true)} />)}
           <Button variant="ghost" size="icon-sm" className="hover:text-destructive" title="Delete wire (⌫)" onClick={() => { onChange({ ...diagram, connections: diagram.connections.filter((_, i) => i !== wireSel) }, true); setWireSel(null) }}><Trash2 /></Button>
         </div>
-      )}
+        )
+      })()}
       {badge && <div className="pointer-events-none absolute left-3 top-3 z-10">{badge}</div>}
       {corner && !thumb && <div className="absolute right-3 top-3 z-10 flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>{corner}</div>}
       {wiring && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-md bg-popover px-2 py-1 text-xs shadow ring-1 ring-border">Click another pin to connect · Esc to cancel</div>}
