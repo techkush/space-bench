@@ -25,7 +25,7 @@ export function FirmwarePanel({ doc, boards, active, setActive, onChange, cosim,
   const cur = boards.find((b) => b.ref === active) ?? boards[0]
   const fw = cur ? firmwareOf(doc, cur.ref, cur.board) : null
   const [file, setFile] = useState("sketch.ino")
-  const [bottom, setBottom] = useState<"serial" | "output">("serial")
+  const [bottom, setBottom] = useState<"serial" | "output" | "terminal">("serial")
   const [line, setLine] = useState("")
   const [compiling, setCompiling] = useState(false)
   const serialEnd = useRef<HTMLDivElement>(null)
@@ -96,15 +96,15 @@ export function FirmwarePanel({ doc, boards, active, setActive, onChange, cosim,
       </div>
       <div className="flex h-[38%] min-h-[140px] shrink-0 flex-col border-t">
         <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
-          {([["serial", "Serial Monitor"], ["output", "Output"]] as const).map(([k, l]) => (
+          {([["serial", linux ? "Program" : "Serial Monitor"], ["output", "Output"], ...(linux ? [["terminal", "Terminal"]] as const : [])] as const).map(([k, l]) => (
             <button key={k} onClick={() => setBottom(k)} className={`h-6 rounded px-2 text-xs ${bottom === k ? "bg-accent font-medium" : "text-muted-foreground hover:text-foreground"}`}>{l}</button>
           ))}
           {bottom === "serial" && <button onClick={() => cosim.clearSerial(cur.ref)} className="ml-auto h-6 rounded px-2 text-xs text-muted-foreground hover:text-foreground">Clear</button>}
         </div>
-        {bottom === "serial" ? (
+        {bottom === "terminal" ? <LinuxTerminal board={cur.board} /> : bottom === "serial" ? (
           <>
             <div className="min-h-0 flex-1 overflow-auto px-3 py-2 font-mono text-xs whitespace-pre-wrap">
-              {serial || <span className="text-muted-foreground">{cosim.active ? "Nothing printed yet." : "Press Run: the sketch's Serial output appears here."}</span>}
+              {serial || <span className="text-muted-foreground">{cosim.active ? "Nothing printed yet." : linux ? "Press Run: the program's output (print) appears here." : "Press Run: the sketch's Serial output appears here."}</span>}
               <div ref={serialEnd} />
             </div>
             <form className="flex shrink-0 gap-1 border-t p-1.5" onSubmit={(e) => { e.preventDefault(); if (!line) return; cosim.sendSerial(cur.ref, line + "\n"); setLine("") }}>
@@ -125,5 +125,57 @@ export function FirmwarePanel({ doc, boards, active, setActive, onChange, cosim,
         )}
       </div>
     </div>
+  )
+}
+
+/** The Linux board's console (logged in as pi): pip, apt, files — anything Linux. */
+function LinuxTerminal({ board }: { board: BoardDef }) {
+  const [text, setText] = useState("")
+  const [line, setLine] = useState("")
+  const [running, setRunning] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const end = useRef<HTMLDivElement>(null)
+  const vmRef = useRef<import("@/linux/agent").LinuxVm | null>(null)
+  useEffect(() => {
+    let off = () => {}
+    let alive = true
+    import("@/linux/agent").then(({ linuxVm }) => {
+      if (!alive) return
+      const vm = linuxVm()
+      vmRef.current = vm
+      const on = (t: string) => setText(t)
+      vm.consoleListeners.add(on)
+      setText(vm.consoleText)
+      setRunning(vm.running)
+      const tick = setInterval(() => setRunning(vm.running), 1000)
+      off = () => { vm.consoleListeners.delete(on); clearInterval(tick) }
+    })
+    return () => { alive = false; off() }
+  }, [])
+  useEffect(() => { end.current?.scrollIntoView({ block: "end" }) }, [text])
+  const start = async () => {
+    const vm = vmRef.current
+    if (!vm) return
+    setStarting(true)
+    try { await vm.boot((board.linux ?? "pi5") as import("@/linux/agent").LinuxBoardId); await vm.console("\n") } catch (e) { toast.error(e instanceof Error ? e.message : String(e)) } finally { setStarting(false); setRunning(vm.running) }
+  }
+  const shown = text.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\r/g, "")
+  return (
+    <>
+      <div className="min-h-0 flex-1 overflow-auto bg-[#111] px-3 py-2 font-mono text-xs whitespace-pre-wrap text-[#ddd]">
+        {shown || <span className="text-[#888]">{running ? "Press Enter for a prompt." : `${board.name} isn't running. Run the circuit, or start it here to install packages (pip install …).`}</span>}
+        <div ref={end} />
+      </div>
+      <form className="flex shrink-0 gap-1 border-t p-1.5" onSubmit={(e) => { e.preventDefault(); void vmRef.current?.console(line + "\n"); setLine("") }}>
+        {running ? (
+          <input value={line} onChange={(e) => setLine(e.target.value)} placeholder="pi@raspberrypi:~ $"
+            className="h-7 min-w-0 flex-1 rounded-md border bg-transparent px-2 font-mono text-xs outline-none focus:border-ring" />
+        ) : (
+          <Button type="button" size="sm" variant="outline" className="h-7" disabled={starting} onClick={start}>{starting && <Loader2 className="size-3.5 animate-spin" />}Start {board.name}</Button>
+        )}
+        {running && <Button type="submit" size="sm" variant="outline" className="h-7">Enter</Button>}
+        {running && <Button type="button" size="sm" variant="ghost" className="h-7" title="Ctrl-C" onClick={() => void vmRef.current?.console("\x03")}>^C</Button>}
+      </form>
+    </>
   )
 }

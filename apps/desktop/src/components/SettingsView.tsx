@@ -376,6 +376,7 @@ function Mcu({ s }: { s: Settings }) {
         </Row>
       </Card>
       <QemuCard s={s} />
+      <LinuxCard />
       <Card title="Emulator">
         <Row label="Speed" hint="1× is real time: delay(1000) takes one second. Slower speeds help watch fast signals.">
           <Select value={String(s.mcuSpeed)} onValueChange={(v) => setSettings({ mcuSpeed: Number(v) })}>
@@ -403,6 +404,39 @@ function QemuCard({ s }: { s: Settings }) {
       <Row label="qemu-system-xtensa" hint={st ?? (st === null ? err : "Looking in PATH and ~/.espressif/tools…")}>
         <Input className="w-[320px] font-mono" placeholder="Automatic" value={s.esp32QemuPath} onChange={(e) => setSettings({ esp32QemuPath: e.target.value })} />
       </Row>
+    </Card>
+  )
+}
+
+/** Raspberry Pi 5 / 4 / 3 / Zero 2 W: Linux in a QEMU VM (src/linux/), set up once. */
+function LinuxCard() {
+  const [st, setSt] = useState<import("@/linux/host").LinuxStatus | null | undefined>(undefined)
+  const [err, setErr] = useState("")
+  const [busy, setBusy] = useState<string | null>(null)
+  const check = () => { setSt(undefined); import("@/linux/host").then((m) => m.linuxStatus()).then(setSt).catch((e) => { setErr(String(e instanceof Error ? e.message : e)); setSt(null) }) }
+  useEffect(check, [])
+  const ready = !!st?.qemu && !!st.boot
+  const setup = async () => {
+    setBusy("Starting…")
+    try {
+      const { setupLinux } = await import("@/linux/provision")
+      await setupLinux((p) => setBusy(`${p.step}/${p.of} · ${p.text}`))
+      toast.success("The Raspberry Pi system is ready")
+      check()
+    } catch (e) { toast.error(String(e instanceof Error ? e.message : e)) } finally { setBusy(null) }
+  }
+  const badge = st === undefined ? <Badge variant="outline">checking…</Badge>
+    : ready ? <Badge variant="secondary" className="bg-success-subtle text-success">ready</Badge>
+    : <Badge variant="outline">{st?.qemu ? "not set up" : "QEMU missing"}</Badge>
+  return (
+    <Card title="Linux Boards (Raspberry Pi 5 · 4 · 3 · Zero 2 W)" badge={badge}
+      action={st?.qemu ? <Button size="sm" variant={ready ? "outline" : "default"} disabled={!!busy} onClick={setup}>{busy && <Loader2 className="animate-spin" />}{ready ? "Set up again" : "Set up (≈1 GB, 3–10 min)"}</Button> : <Button variant="outline" size="sm" onClick={check}>Check</Button>}>
+      <Row label="System" hint={busy ?? (ready
+        ? "Debian 13 with Raspberry Pi's packages (gpiozero, lgpio, RPi.GPIO) — boots as the Pi you place, in about 3 s."
+        : st?.qemu ? "Downloads Debian 13 for arm64 and prepares it as a Raspberry Pi: the GPIO pins become the circuit's." : (st === null ? err : "Linux boards need QEMU: install it with `brew install qemu`, then press Check."))}>
+        <span className="font-mono text-xs text-muted-foreground">{st?.qemu?.split(" · ")[0] ?? ""}</span>
+      </Row>
+      {st?.dir && <Row label="Folder" hint="The Pi's disk lives here; packages you install with pip stay installed."><span className="max-w-[320px] truncate font-mono text-xs text-muted-foreground" title={st.dir}>{st.dir}</span></Row>}
     </Card>
   )
 }

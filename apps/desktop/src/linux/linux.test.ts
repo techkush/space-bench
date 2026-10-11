@@ -25,6 +25,7 @@ import { setLoader } from "@/lib/kicad"
 import type { SpiceNetlist } from "@/lib/spice"
 import { linuxChip } from "./chip"
 import { linuxVm } from "./agent"
+import { loadExample } from "@/editor/examples"
 
 const KICAD = path.resolve(import.meta.dirname, "../../public/kicad")
 setLoader(async (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(KICAD, `${f}.gz`))).toString()))
@@ -87,5 +88,24 @@ while True:
     expect(mean).toBeLessThan(2.7)
     expect(serial).toContain("pressed")
     expect(serial).not.toContain("released")
+  })
+
+  it("the Raspberry Pi example: pressing SW1 in the schematic lights the LED (gpiozero callbacks)", async () => {
+    const doc = await loadExample("pi-button-led")
+    const [b] = boardParts(doc)
+    const chip = await linuxChip(b.board, doc.firmware![b.part.ref])
+    const sim = new CoSim(doc, [{ ref: b.part.ref, board: b.board, chip }], simulate, { frame: 0.05 })
+    let serial = ""
+    const led = async (seconds: number) => { const ma: number[] = []; const end = sim.t + seconds; while (sim.t < end) { const f = await sim.step(); serial += f.serial[b.part.ref]; ma.push((f.avg["I(D1)"] ?? 0) * 1000) } return ma }
+    // the program takes a moment to import gpiozero and set up its callbacks
+    const open = await led(1.5)
+    expect(Math.max(...open.slice(-5))).toBeLessThan(0.3)
+    sim.setDoc({ ...doc, parts: doc.parts.map((p) => (p.ref === "SW1" ? { ...p, sim: { ...p.sim, Params: "closed=1" } } : p)) })
+    const closed = await led(0.5)
+    sim.dispose()
+    // green LED, Vf ≈ 2.1 V: (3.3 − 2.1) / 355 ≈ 3.4 mA
+    expect(Math.min(...closed.slice(-4))).toBeGreaterThan(3)
+    expect(serial).toContain("Raspberry Pi 4")
+    expect(serial).toContain("SW1 pressed")
   })
 })

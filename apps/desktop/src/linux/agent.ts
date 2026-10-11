@@ -26,6 +26,9 @@ export class LinuxVm {
   onOutput: ((text: string) => void) | null = null
   onExit: ((code: number) => void) | null = null
   onStopped: ((log: string) => void) | null = null
+  /** the console so far (the Terminal shows it); listeners get the whole text on each change */
+  consoleText = ""
+  readonly consoleListeners = new Set<(text: string) => void>()
   private inbox: Msg[] = []
   private waiters: { ev: string; ok: (m: Msg) => void; fail: (e: Error) => void }[] = []
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -40,7 +43,8 @@ export class LinuxVm {
     if (!st.qemu) throw new Error("QEMU isn't installed (qemu-system-aarch64). Install it with `brew install qemu`, or from Settings → Microcontrollers.")
     if (!st.boot) throw new Error("The Raspberry Pi system isn't set up yet — Settings → Microcontrollers → Linux boards → Set up.")
     this.board = board
-    await linuxStart({ disk: st.boot.disk, kernel: st.boot.kernel, initrd: st.boot.initrd, append: st.boot.append, credentials: [`spacebench.board=${board}`] })
+    // direct kernel boot has no firmware (no SMBIOS credentials): the board travels on the kernel command line
+    await linuxStart({ disk: st.boot.disk, kernel: st.boot.kernel, initrd: st.boot.initrd, append: `${st.boot.append} systemd.set_credential=spacebench.board:${board}` })
     this.alive = true
     this.inbox = []
     this.pump()
@@ -102,7 +106,11 @@ export class LinuxVm {
     if (!this.alive) return
     try {
       const p = await linuxPoll()
-      if (p.console) this.onConsole?.(p.console)
+      if (p.console) {
+        this.consoleText = (this.consoleText + p.console).slice(-60_000)
+        this.onConsole?.(p.console)
+        for (const l of this.consoleListeners) l(this.consoleText)
+      }
       for (const line of p.agent.split("\n")) if (line.trim()) { try { this.deliver(JSON.parse(line)) } catch { /* partial / noise */ } }
       if (!p.running) {
         this.alive = false
