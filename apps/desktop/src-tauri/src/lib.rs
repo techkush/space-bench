@@ -108,6 +108,8 @@ fn esp32_poll() -> esp32::Poll { esp32::poll() }
 fn esp32_send(serial: Option<String>, bridge: Option<Vec<u8>>) -> Result<(), String> { esp32::send(serial, bridge) }
 #[tauri::command]
 fn esp32_stop() { esp32::stop() }
+#[tauri::command]
+fn esp32_qmp(cmd: String) -> Result<(), String> { esp32::qmp_cmd(&cmd) }
 
 /// Linux boards (Raspberry Pi) in a QEMU VM (see linux.rs).
 #[tauri::command]
@@ -168,7 +170,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![simulate, ngspice_run, ngspice_halt, ngspice_alter, ngspice_lib_path, ngspice_version, ngspice_path, claude_code_run, claude_code_cancel, claude_code_version, arduino_compile, arduino_status, arduino_install_core, esp32_status, esp32_install, esp32_start, esp32_poll, esp32_send, esp32_stop, linux_status, linux_fetch, linux_disk, linux_save, linux_start, linux_poll, linux_send, linux_qmp, linux_stop, renode_status, renode_install, renode_start, renode_cmd, renode_stage, renode_stop])
+    .invoke_handler(tauri::generate_handler![simulate, ngspice_run, ngspice_halt, ngspice_alter, ngspice_lib_path, ngspice_version, ngspice_path, claude_code_run, claude_code_cancel, claude_code_version, arduino_compile, arduino_status, arduino_install_core, esp32_status, esp32_install, esp32_start, esp32_poll, esp32_send, esp32_stop, esp32_qmp, linux_status, linux_fetch, linux_disk, linux_save, linux_start, linux_poll, linux_send, linux_qmp, linux_stop, renode_status, renode_install, renode_start, renode_cmd, renode_stage, renode_stop])
     .run(tauri::generate_context!())
     .expect("error while building tauri application");
 }

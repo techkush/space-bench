@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-struct Session { child: Child, stdin: ChildStdin, bridge: Option<TcpStream>, serial: Arc<Mutex<Vec<u8>>>, pins: Arc<Mutex<Vec<u8>>>, log: Arc<Mutex<String>> }
+struct Session { child: Child, stdin: ChildStdin, bridge: Option<TcpStream>, qmp: Option<std::io::BufReader<TcpStream>>, serial: Arc<Mutex<Vec<u8>>>, pins: Arc<Mutex<Vec<u8>>>, log: Arc<Mutex<String>> }
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 
 fn runnable(p: &std::path::Path) -> bool {
@@ -25,17 +25,19 @@ pub fn find(custom: Option<&str>) -> Option<PathBuf> { find_arch(custom, "xtensa
 pub fn find_arch(custom: Option<&str>, arch: &str) -> Option<PathBuf> {
   if arch == "xtensa" { if let Some(p) = custom.map(str::trim).filter(|p| !p.is_empty()) { let p = PathBuf::from(p); return runnable(&p).then_some(p); } }
   let exe = if cfg!(windows) { format!("qemu-system-{arch}.exe") } else { format!("qemu-system-{arch}") };
-  let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
-  for d in ["/opt/homebrew/bin", "/usr/local/bin"] { dirs.push(PathBuf::from(d)); }
+  // Espressif's builds first (Space Bench's install, then ESP-IDF's): Homebrew's qemu-system-xtensa
+  // (installed with QEMU for the Pi boards) has no ESP32 machines
+  let mut dirs: Vec<PathBuf> = Vec::new();
   let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
-  // ~/.espressif/tools/qemu-xtensa/<version>/qemu/bin (newest first)
-  for root in [home.join(format!(".espressif/tools/qemu-{arch}")), home.join(format!("Library/Application Support/Space Bench/qemu-{arch}"))] {
+  for root in [home.join(format!("Library/Application Support/Space Bench/qemu-{arch}")), home.join(format!(".espressif/tools/qemu-{arch}"))] {
     if let Ok(rd) = std::fs::read_dir(&root) {
       let mut v: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
       v.sort(); v.reverse();
       for d in v { dirs.push(d.join("qemu/bin")); }
     }
   }
+  if let Some(p) = std::env::var_os("PATH") { dirs.extend(std::env::split_paths(&p)); }
+  for d in ["/opt/homebrew/bin", "/usr/local/bin"] { dirs.push(PathBuf::from(d)); }
   dirs.into_iter().map(|d| d.join(&exe)).find(|p| runnable(p))
 }
 
@@ -85,8 +87,11 @@ pub fn start(image: &str, custom: Option<&str>, machine: &str) -> Result<(), Str
   let port = std::net::TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()).map(|a| a.port()).map_err(|e| e.to_string())?;
   // the bridge is UART2 on the ESP32, UART1 on the S3 / C3 (QEMU wires only UART0 and UART1 there)
   let bridge = format!("tcp:127.0.0.1:{port},server=on,wait=off");
+  // QMP: schematics pause the chip while the circuit simulates (lockstep)
+  let qport = std::net::TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()).map(|a| a.port()).map_err(|e| e.to_string())?;
   let mut cmd = Command::new(&bin);
-  cmd.args(["-nographic", "-monitor", "none", "-nic", "none", "-drive"]).arg(format!("file={},if=mtd,format=raw", flash.display()));
+  cmd.args(["-nographic", "-monitor", "none", "-nic", "none", "-qmp"]).arg(format!("tcp:127.0.0.1:{qport},server=on,wait=off"))
+    .arg("-drive").arg(format!("file={},if=mtd,format=raw", flash.display()));
   match machine {
     "esp32" => { cmd.args(["-machine", "esp32", "-m", "4M", "-serial", "stdio", "-serial", "null", "-serial"]).arg(&bridge); }
     "esp32c3" => { cmd.args(["-machine", "esp32c3", "-icount", "3", "-serial", "stdio", "-serial"]).arg(&bridge); }
@@ -109,8 +114,34 @@ pub fn start(image: &str, custom: Option<&str>, machine: &str) -> Result<(), Str
   }
   let bridge = bridge.ok_or("QEMU's bridge port did not open")?;
   pump(Box::new(bridge.try_clone().map_err(|e| e.to_string())?), pins.clone());
-  *SESSION.lock().unwrap() = Some(Session { child, stdin, bridge: Some(bridge), serial, pins, log });
+  let mut qmp = None;
+  for _ in 0..50 {
+    if let Ok(s) = TcpStream::connect(("127.0.0.1", qport)) {
+      let mut r = std::io::BufReader::new(s);
+      let mut greeting = String::new();
+      use std::io::BufRead;
+      if r.read_line(&mut greeting).is_ok() { qmp = Some(r); }
+      break
+    }
+    std::thread::sleep(std::time::Duration::from_millis(40));
+  }
+  *SESSION.lock().unwrap() = Some(Session { child, stdin, bridge: Some(bridge), qmp, serial, pins, log });
+  let _ = qmp_cmd("qmp_capabilities");
   Ok(())
+}
+
+/// A QMP command ("stop" pauses the chip and its clock, "cont" resumes it).
+pub fn qmp_cmd(cmd: &str) -> Result<(), String> {
+  use std::io::BufRead;
+  let mut g = SESSION.lock().unwrap();
+  let q = g.as_mut().and_then(|s| s.qmp.as_mut()).ok_or("The ESP32 is not running")?;
+  q.get_mut().write_all(format!("{{\"execute\":\"{cmd}\"}}\n").as_bytes()).map_err(|e| e.to_string())?;
+  loop {
+    let mut line = String::new();
+    if q.read_line(&mut line).map_err(|e| e.to_string())? == 0 { return Err("QMP closed".into()); }
+    if line.contains("\"return\"") { return Ok(()); }
+    if line.contains("\"error\"") { return Err(line); }
+  }
 }
 
 #[derive(serde::Serialize)]

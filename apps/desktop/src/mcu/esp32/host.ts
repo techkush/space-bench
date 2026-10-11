@@ -23,4 +23,6 @@ export async function espPoll(): Promise<EspPoll> {
   return (await fetch("/api/esp32/poll")).json()
 }
 export async function espSend(serial?: string, bridge?: number[]) { if (isTauri()) await invoke("esp32_send", { serial: serial ?? null, bridge: bridge ?? null }); else await post("/api/esp32/send", { serial, bridge }) }
+/** "stop" pauses the chip (and its clock), "cont" resumes it — schematics run it in lockstep */
+export async function espQmp(cmd: "stop" | "cont") { if (isTauri()) await invoke("esp32_qmp", { cmd }); else await post("/api/esp32/qmp", { cmd }) }
 export async function espStop() { if (isTauri()) await invoke("esp32_stop").catch(() => {}); else if (devServer) await post("/api/esp32/stop").catch(() => {}) }

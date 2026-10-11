@@ -12,6 +12,10 @@ const SYMBOLS: [RegExp, string][] = [
   [/^MCU_ST_STM32F4:STM32F407V(E|G|_E-G_)Tx$/, "sb-stm32f4-discovery"],
   [/^MCU_ST_STM32F1:STM32F103C8Tx$/, "sb-stm32-blue-pill"],
   [/^MCU_Microchip_ATtiny:ATtiny85V?-\d+[MPS]$/, "sb-attiny85"],
+  // ESP32 modules run on Espressif's QEMU as the DevKit built around them
+  [/^RF_Module:ESP32-WROOM-32/, "wokwi-esp32-devkit-v1"],
+  [/^RF_Module:ESP32-S3-WROOM-1/, "sb-esp32-s3-devkitc-1"],
+  [/^RF_Module:ESP32-C3-WROOM-02/, "sb-esp32-c3-devkitm-1"],
 ]
 
 /**
@@ -78,6 +82,9 @@ export function pinRole(board: BoardDef, name: string): PinRole | null {
     if (m && board.pins[`GP${m[1]}`]) return { k: "io", pin: `GP${m[1]}` }
     // the Pi 4 symbol zero-pads ("SDA_I2C1/GPIO02")
     if (m && board.pins[`GPIO${Number(m[1])}`]) return { k: "io", pin: `GPIO${Number(m[1])}` }
+    // ESP32 modules: "IO2", "TXD0/IO1" — the board pin on that GPIO
+    m = /^(?:IO|GPIO)(\d+)$/.exec(part)
+    if (m) { const g = Number(m[1]); const pin = Object.entries(board.pins).find(([, bp]) => bp.bit === g)?.[0]; if (pin) return { k: "io", pin } }
   }
   return null
 }

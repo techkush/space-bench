@@ -12,6 +12,9 @@ import { workerChip } from "./workerChip"
 import { linuxChip } from "@/linux/chip"
 import { renodeChip } from "@/renode/chip"
 import { renodeStage } from "@/renode/host"
+import { esp32Chip } from "@/mcu/esp32/chip"
+import { ESP32_BRIDGE, ESP32_BRIDGE_FILE } from "@/mcu/esp32/bridge"
+import { getSettings } from "@/lib/settings"
 
 export type CoSimStatus = "idle" | "compiling" | "starting" | "running" | "error"
 
@@ -65,12 +68,14 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
     const cached = buildCache.current[ref]
     if (cached?.ok && cached.key === key) return cached
     // Renode boards: the set-up the emulated chip needs goes in with the sketch
-    const files = [...fw.files, ...(b.board.renode?.sources ?? [])]
+    const files = [...fw.files, ...(b.board.renode?.sources ?? []), ...(b.board.chip === "esp32" ? [{ name: ESP32_BRIDGE_FILE, content: ESP32_BRIDGE }] : [])]
     const out = await compileSketch(files, b.board.fqbn, parseLibraries(fw.libraries ?? ""), cb.current.cliBin || undefined, b.board.buildProps)
     const build: BoardBuild = {
       ok: out.ok, log: out.log, diagnostics: out.diagnostics, key, flash: out.flash,
       // Renode boots the ELF from disk: keep a copy the next compile won't delete
-      firmware: b.board.firmware === "hex" ? out.hex : b.board.firmware === "elf" ? (out.ok && out.elf ? await renodeStage(out.elf) : null) : out.bin,
+      // Renode boots the ELF and QEMU the flash image from disk: keep copies the next compile won't delete
+      firmware: b.board.firmware === "hex" ? out.hex : b.board.firmware === "elf" ? (out.ok && out.elf ? await renodeStage(out.elf) : null)
+        : b.board.firmware === "image" ? (out.ok && out.image ? await renodeStage(out.image) : null) : out.bin,
     }
     if (build.ok && !build.firmware) { build.ok = false; build.log += "\nThe compiler produced no firmware image." }
     buildCache.current[ref] = build
@@ -113,11 +118,14 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
       setStatus("starting")
       const linux = boards.filter((b) => b.board.chip === "linux")
       if (linux.length > 1) { fail(`Only one Linux board can run at a time (${linux.map((b) => b.part.ref).join(", ")}).`); return }
+      const esp = boards.filter((b) => b.board.chip === "esp32")
+      if (esp.length > 1) { fail(`Only one ESP32 can run at a time (${esp.map((b) => b.part.ref).join(", ")}).`); return }
       const renode = boards.filter((b) => b.board.chip === "renode")
       if (renode.length > 1) { fail(`Only one Renode board can run at a time (${renode.map((b) => b.part.ref).join(", ")}).`); return }
       for (const [i, b] of boards.entries()) {
         if (b.board.chip === "linux") chips.push(await linuxChip(b.board, firmwareOf(docRef.current, b.part.ref, b.board)))
         else if (b.board.chip === "renode") chips.push(await renodeChip(b.board, built[i].firmware as string))
+        else if (b.board.chip === "esp32") chips.push(await esp32Chip(b.board, built[i].firmware as string, getSettings().esp32QemuPath))
         else chips.push(typeof Worker === "undefined" ? localChip(b.board, built[i].firmware!) : await workerChip(b.board, built[i].firmware!))
       }
       if (my !== token.current) { chips.forEach((c) => c.dispose()); return }

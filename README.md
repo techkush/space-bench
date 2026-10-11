@@ -50,7 +50,7 @@ Space Bench is a free, local-first circuit workbench, developed on macOS (it is 
 | Arduino Uno, Nano, Mega 2560 (+ compatibles) | avr8js | ✓ | Uno, Nano |
 | ATtiny85 (ATTinyCore) | avr8js | ✓ | ✓ (bare chip) |
 | Raspberry Pi Pico | rp2040js (USB serial, PIO) | ✓ | ✓ |
-| ESP32 DevKit, ESP32-S3 DevKitC-1, ESP32-C3 DevKitM-1 | Espressif's QEMU + a GPIO bridge | ✓ | — |
+| ESP32 DevKit, ESP32-S3 DevKitC-1, ESP32-C3 DevKitM-1 | Espressif's QEMU + a GPIO bridge (paused between frames in schematics) | ✓ | ✓ (ESP32-WROOM-32 / S3-WROOM-1 / C3-WROOM-02 modules) |
 | STM32F4 Discovery, STM32 Blue Pill | Renode (real stm32duino ELF) | ✓ | ✓ (bare STM32F407 / F103C8) |
 | Arduino Nano 33 BLE (nRF52840) | Renode | ✓ | — |
 | **Raspberry Pi 5, 4B, 3B+, Zero 2 W** | **Linux in a VM** (QEMU + the host hypervisor): Debian 13 + Raspberry Pi's gpiozero / lgpio / RPi.GPIO, GPIO through the circuit | ✓ | ✓ (40-pin header) |
