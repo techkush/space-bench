@@ -105,7 +105,7 @@ const brd = (title: string, look: Look, pins: string[], o: Opt & { noEmu?: strin
   add("Boards", o.sub, title, look, pins, none(o.noEmu), o)
 const hdr = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i}`)
 const piPins = ["3V3", "5V", "GPIO2", "GPIO3", "GPIO4", "GND", "GPIO17", "GPIO27", "GPIO22", "GPIO10", "GPIO9", "GPIO11", "GPIO14", "GPIO15", "GPIO18", "GPIO23", "GPIO24", "GPIO25", "GPIO8", "GPIO7"]
-const LINUX = "Linux single-board computer — runs Python/Linux, which needs a full-system emulator; placed for wiring diagrams only."
+const LINUX = "Older Raspberry Pi — drawn for wiring; the Pi 5, 4B, 3B+ and Zero 2 W run Linux (set them up in Settings → Microcontrollers)."
 
 // emulated variants (boards.ts gives them pins and a chip)
 add("Boards", "Arduino", "Raspberry Pi Pico W", { k: "board", color: "#1a6b3a", chip: "RP2040", usb: true }, boardByType("sb-pi-pico-w")?.header ?? [], none(), { type: "sb-pi-pico-w", base: "wokwi-pi-pico", board: true, hint: "RP2040 + CYW43 radio: runs on the same RP2040 emulator as the Pico (the radio isn't emulated; LED_BUILTIN is GP25 here)." })
@@ -122,7 +122,12 @@ add("Boards", "Seeed XIAO", "XIAO RP2040", { k: "board", color: "#2b2b2b", chip:
 
 // boards drawn for diagrams; no emulator yet
 const pi = (t: string, chip: string) => brd(t, { k: "board", color: "#2b8a3e", chip, w: 230, h: 150 }, piPins, { sub: "Raspberry Pi", noEmu: LINUX })
-pi("Raspberry Pi Zero", "BCM2835"); pi("Raspberry Pi 1B+", "BCM2835"); pi("Raspberry Pi 2B", "BCM2836"); pi("Raspberry Pi 3B", "BCM2837"); pi("Raspberry Pi 4B", "BCM2711"); pi("Raspberry Pi 5", "BCM2712")
+pi("Raspberry Pi Zero", "BCM2835"); pi("Raspberry Pi 1B+", "BCM2835"); pi("Raspberry Pi 2B", "BCM2836")
+// Linux boards: Debian + Raspberry Pi's packages in a VM, GPIO through the circuit (src/linux/)
+const piLinux = (title: string, type: string, chip: string) => add("Boards", "Raspberry Pi", title, { k: "board", color: "#2b8a3e", chip, w: 230, h: 150 }, boardByType(type)?.header ?? [], none(), {
+  type, board: true, hint: `${title} running Linux (Python 3, gpiozero, lgpio, RPi.GPIO) in a VM: main.py drives GPIO0–27 on the 40-pin header, and the Terminal is its console. Set it up once in Settings → Microcontrollers.`,
+})
+piLinux("Raspberry Pi 5", "sb-raspberry-pi-5", "BCM2712"); piLinux("Raspberry Pi 4B", "sb-raspberry-pi-4", "BCM2711"); piLinux("Raspberry Pi 3B+", "sb-raspberry-pi-3", "BCM2837"); piLinux("Raspberry Pi Zero 2 W", "sb-raspberry-pi-zero-2w", "RP3A0")
 const espNo = "ESP32-C6/C5/P4 (and these S3/C3 boards' own pinouts) aren't emulated yet — Espressif's QEMU runs the ESP32, ESP32-S3 and ESP32-C3; use the S3 / C3 DevKit to run a sketch."
 const esp = (t: string, chip: string, n = 14) => brd(t, { k: "board", color: "#1c1c1c", chip, usb: true }, [...hdr("IO", n), "3V3", "5V", "GND"], { sub: "ESP32", noEmu: espNo })
 add("Boards", "ESP32", "ESP32-S3 DevKitC-1", { k: "board", color: "#1c1c1c", chip: "ESP32-S3", usb: true }, boardByType("sb-esp32-s3-devkitc-1")?.header ?? [], none(), { type: "sb-esp32-s3-devkitc-1", board: true, hint: "ESP32-S3 on Espressif's QEMU (qemu-system-xtensa -M esp32s3): GPIO, analogRead, PWM; Serial on UART0." })
@@ -134,8 +139,13 @@ esp("Beetle ESP32-C3", "ESP32-C3", 8); esp("FireBeetle 2 ESP32-E", "ESP32-E"); e
 esp("Romeo ESP32-S3", "ESP32-S3"); esp("FireBeetle 2 ESP32-C5", "ESP32-C5"); esp("FireBeetle 2 ESP32-P4", "ESP32-P4"); esp("M5Stack Core", "ESP32"); esp("M5 Cardputer ADV", "ESP32-S3"); esp("UNIHIKER K10", "ESP32-S3")
 const stm = "ARM Cortex-M boards need an ARM system emulator (planned) — drawn for wiring; not emulated yet."
 const arm = (t: string, chip: string, sub: string, n = 16, color = "#1d4ed8") => brd(t, { k: "board", color, chip }, [...hdr("P", n), "3V3", "5V", "GND"], { sub, noEmu: stm })
-arm("STM32 Blue Pill", "STM32F103C8", "STM32"); arm("STM32 Black Pill", "STM32F411", "STM32", 16, "#111"); arm("STM32 Blue Pill (F103CB)", "STM32F103CB", "STM32"); arm("STM32 Black Pill (F401)", "STM32F401", "STM32", 16, "#111")
-arm("STM32F4 Discovery", "STM32F407", "STM32", 20, "#e5e7eb"); arm("Olimex STM32-H405", "STM32F405", "STM32", 16, "#166534"); arm("Netduino Plus 2", "STM32F405", "STM32", 14, "#111"); arm("Netduino 2", "STM32F405", "STM32", 14, "#111")
+// Renode boards: the real firmware (ELF) on Antmicro's Renode (src/renode/)
+const renodeBrd = (title: string, type: string, chip: string, sub: string, color: string, hint: string) => add("Boards", sub, title, { k: "board", color, chip }, boardByType(type)?.header ?? [], none(), { type, board: true, hint })
+renodeBrd("STM32 Blue Pill", "sb-stm32-blue-pill", "STM32F103C8", "STM32", "#1d4ed8", "STM32F103C8 on Renode (stm32duino — install STMicroelectronics:stm32 from the Microcontrollers page): GPIO, Serial on USART1 (PA9/PA10). Runs on the 8 MHz internal clock in the emulator.")
+renodeBrd("STM32F4 Discovery", "sb-stm32f4-discovery", "STM32F407", "STM32", "#e5e7eb", "STM32F407VG on Renode (stm32duino): GPIO PA–PE, the user LED on PD12, the button on PA0, Serial on USART2.")
+renodeBrd("Arduino Nano 33 BLE", "sb-arduino-nano-33-ble", "nRF52840", "Arduino", "#0f766e", "nRF52840 on Renode (arduino:mbed_nano): GPIO by Arduino pin name; use Serial1 (the USB Serial isn't emulated).")
+arm("STM32 Black Pill", "STM32F411", "STM32", 16, "#111"); arm("STM32 Blue Pill (F103CB)", "STM32F103CB", "STM32"); arm("STM32 Black Pill (F401)", "STM32F401", "STM32", 16, "#111")
+arm("Olimex STM32-H405", "STM32F405", "STM32", 16, "#166534"); arm("Netduino Plus 2", "STM32F405", "STM32", 14, "#111"); arm("Netduino 2", "STM32F405", "STM32", 14, "#111")
 arm("Seeeduino XIAO (SAMD21)", "SAMD21", "Seeed XIAO", 11, "#2b2b2b"); arm("XIAO nRF52840 Sense", "nRF52840", "Seeed XIAO", 11, "#2b2b2b"); arm("XIAO RA4M1", "RA4M1", "Seeed XIAO", 11, "#2b2b2b")
 arm("XIAO MG24 Sense", "EFR32MG24", "Seeed XIAO", 11, "#2b2b2b"); arm("XIAO nRF54L15 Sense", "nRF54L15", "Seeed XIAO", 11, "#2b2b2b"); arm("XIAO RP2350", "RP2350", "Seeed XIAO", 11, "#2b2b2b")
 arm("Pimoroni Pico Plus 2 W", "RP2350", "Raspberry Pi", 20, "#111"); arm("Pimoroni Badger 2350", "RP2350", "Raspberry Pi", 10, "#111"); arm("Pimoroni Stellar Unicorn", "RP2350", "Raspberry Pi", 6, "#111")

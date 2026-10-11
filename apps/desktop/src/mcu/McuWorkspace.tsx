@@ -19,7 +19,7 @@ import { Splitter } from "@/components/Splitter"
 import { setSettings, useSettings } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 import { mcuProfile, type McuAgentHost } from "./agent"
-import { BOARDS, boardByType, isBoardType } from "./boards"
+import { BOARDS, boardByType, isBoardType, isLinuxBoard } from "./boards"
 import { setBuzzers, stopBuzzers } from "./buzzers"
 import { Circuit, type PartUi } from "./circuit"
 import { cliStatus, compileSketch, coreOf, installCore, parseLibraries, type CompileOutput, type Diagnostic } from "./compile"
@@ -32,6 +32,10 @@ import type { Frame, Snapshot } from "./sim"
 import { CheckDialog } from "./CheckDialog"
 import { ESP32_BRIDGE, ESP32_BRIDGE_FILE } from "./esp32/bridge"
 import { espPoll, espSend, espStart, espStop } from "./esp32/host"
+import type { ChipLink } from "@/cosim/chip"
+import { linuxChip } from "@/linux/chip"
+import { renodeChip } from "@/renode/chip"
+import { renodeStage } from "@/renode/host"
 import { LogicBuffer } from "./logic"
 import { LogicAnalyzer } from "./LogicAnalyzer"
 import type { FromWorker, ToWorker } from "./sim.worker"
@@ -50,7 +54,9 @@ const SENSOR_CONTROLS: Record<string, { key: "value" | "y"; label: string; min: 
 
 type Status = { kind: "idle" } | { kind: "compiling" } | { kind: "ok"; out: CompileOutput } | { kind: "error"; out?: CompileOutput; message?: string }
 const fileIcon = (n: string) => (n === DIAGRAM ? FileJson : n.endsWith(".txt") ? FileText : FileCode2)
-const langOf = (n: string) => (n.endsWith(".json") ? "json" : n.endsWith(".txt") ? "ini" : "cpp")
+const langOf = (n: string) => (n.endsWith(".json") ? "json" : n.endsWith(".txt") ? "ini" : n.endsWith(".py") ? "python" : "cpp")
+/** a board's main file: the sketch, or main.py on a Linux board */
+const isMain = (n: string) => n.endsWith(".ino") || n.endsWith(".py")
 const hashOf = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(36) }
 
 export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme, onBack, onSave, onOpenSettings, onDelete }: {
@@ -156,7 +162,9 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
     mainRef.current = mainId
     setFiles((fs) => {
       let out = old && mainId && old !== mainId ? rehome(fs, old, mainId) : fs
-      for (const b of boards.slice(1)) if (!out.some((f) => f.name.startsWith(`${b.id}/`) && f.name.endsWith(".ino"))) out = [...out, ...blankFiles(`${b.id}/`)]
+      for (const b of boards.slice(1)) if (!out.some((f) => f.name.startsWith(`${b.id}/`) && isMain(f.name))) out = [...out, ...blankFiles(`${b.id}/`, isLinuxBoard(boardByType(b.type)))]
+      // the first board a Linux board (a new Pi sketch, or the board type changed): it runs main.py
+      if (boards[0] && isLinuxBoard(boardByType(boards[0].type)) && !out.some((f) => !f.name.includes("/") && f.name.endsWith(".py"))) out = [...out, ...blankFiles("", true)]
       return out
     })
     if (old && mainId && old !== mainId) { setTabs((t) => [...new Set(t.map((n) => (n.includes("/") ? n : `${old}/${n}`)).map((n) => (n.startsWith(`${mainId}/`) ? n.slice(mainId.length + 1) : n)))]); setActive((a) => (a.includes("/") ? (a.startsWith(`${mainId}/`) ? a.slice(mainId.length + 1) : "sketch.ino") : "sketch.ino")) }
@@ -166,9 +174,12 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
   const showCode = useCallback((id: string) => {
     const pre = prefixOf(id, mainRef.current)
     const own = files.filter((f) => (pre ? f.name.startsWith(pre) : !f.name.includes("/")))
-    const n = own.find((f) => f.name === `${pre}sketch.ino`)?.name ?? own.find((f) => f.name.endsWith(".ino"))?.name ?? `${pre}sketch.ino`
+    const linux = isLinuxBoard(boardByType(boards.find((b) => b.id === id)?.type ?? ""))
+    const n = linux
+      ? own.find((f) => f.name === `${pre}main.py`)?.name ?? own.find((f) => f.name.endsWith(".py"))?.name ?? `${pre}main.py`
+      : own.find((f) => f.name === `${pre}sketch.ino`)?.name ?? own.find((f) => f.name.endsWith(".ino"))?.name ?? `${pre}sketch.ino`
     setActive(n); setTabs((t) => (t.includes(n) ? t : [...t, n]))
-  }, [files])
+  }, [files, boards])
   const selectPart = useCallback((id: string | null) => {
     setSelected(id)
     if (id && boards.some((b) => b.id === id)) showCode(id)
@@ -189,7 +200,13 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
 
   // ── the workers (one per board) ────────────────────────────────────────────────────────
   const espTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  /** Linux / Renode boards: their chips run here, frame by frame, fed to the workers */
+  const fedChips = useRef(new Map<string, ChipLink>())
+  const fedRun = useRef(0)
   const stop = useCallback(() => {
+    fedRun.current++
+    for (const c of fedChips.current.values()) c.dispose()
+    fedChips.current.clear()
     for (const w of workers.current.values()) { w.postMessage({ type: "stop" } satisfies ToWorker); w.terminate() }
     workers.current.clear()
     if (espTimer.current) { clearInterval(espTimer.current); espTimer.current = null; espStop() }
@@ -247,8 +264,35 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
           if (!r.running) { toast.error("The ESP32 emulator stopped", { description: r.log.split("\n").filter(Boolean).slice(-3).join(" · ") }); stop() }
         }, 33)
       }
-      w.postMessage({ type: "start", diagram: boardDiagram(simDiagram, id), hex: fws[id], speed: esp ? 1 : s.mcuSpeed } satisfies ToWorker)
+      const fedDef = boardByType(b.type)
+      const fed = fedDef?.chip === "linux" || fedDef?.chip === "renode"
+      w.postMessage({ type: "start", diagram: boardDiagram(simDiagram, id), hex: fed ? "" : fws[id], speed: esp || fed ? 1 : s.mcuSpeed } satisfies ToWorker)
       for (const [pid, u] of Object.entries(ui)) w.postMessage({ type: "ui", id: pid, ui: u } satisfies ToWorker)
+      if (fed && fedDef) {
+        // the chip runs here in 50 ms lockstep frames; the worker solves the circuit from them
+        const run = fedRun.current
+        let levels: [string, boolean][] = []
+        const prev = w.onmessage
+        w.onmessage = (e: MessageEvent<FromWorker>) => { if (e.data.type === "fed-in") levels = e.data.levels; else prev?.call(w, e) }
+        try {
+          const chip = fedDef.chip === "linux"
+            ? await linuxChip(fedDef, { files: JSON.parse(fws[id] as string) as { name: string; content: string }[] })
+            : await renodeChip(fedDef, fws[id] as string)
+          if (run !== fedRun.current) { chip.dispose(); return }
+          fedChips.current.set(id, chip)
+          void (async () => {
+            try {
+              const T = 0.05
+              w.postMessage({ type: "fed-frame", frame: await chip.frame({ seconds: 0, digital: levels, analog: [] }), seconds: 0 } satisfies ToWorker)
+              while (run === fedRun.current) {
+                const frame = await chip.frame({ seconds: T, digital: levels, analog: [] })
+                if (run !== fedRun.current) break
+                w.postMessage({ type: "fed-frame", frame, seconds: T } satisfies ToWorker)
+              }
+            } catch (e) { if (run === fedRun.current) { toast.error(`${id}: ${e instanceof Error ? e.message : String(e)}`); stop() } }
+          })()
+        } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); stop(); return }
+      }
     }
     setRunning(true); setPaused(false)
   }, [simDiagram, s.mcuSpeed, s.esp32QemuPath, ui, stop, boards, multi])
@@ -274,6 +318,13 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
     const id = b.part.id, def = b.def
     const set = (st: Status) => { setStatuses((o) => ({ ...o, [id]: st })); return { fw: null, st } }
     if (!def) return set({ kind: "error", message: `Unknown board ${b.part.type}` })
+    if (def.chip === "linux") {
+      // Python runs as it is: the files are the "firmware"
+      if (!b.sources.some((f) => f.name.endsWith(".py"))) return set({ kind: "error", message: `${id} has no .py program (main.py)` })
+      const fw = JSON.stringify(b.sources.filter((f) => !f.name.endsWith(".json")))
+      setHexes((o) => ({ ...o, [id]: { hex: fw, key: b.key } }))
+      return { ...set({ kind: "ok", out: { ok: true, hex: null, bin: null, image: null, elf: null, log: "Python runs as it is on the board — nothing to compile.", diagnostics: [] } }), fw }
+    }
     if (!b.sources.some((f) => f.name.endsWith(".ino"))) return set({ kind: "error", message: `${id} has no .ino sketch` })
     set({ kind: "compiling" })
     try {
@@ -281,11 +332,12 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
       const core = coreOf(def.fqbn)
       if (!st.cores.includes(core)) throw new Error(`The ${core} board core is not installed. Click “Install ${core}” to download it (once${def.chip === "rp2040" ? ", about 300 MB" : ""}).`)
       // ESP32: the bridge that reports pin activity from QEMU goes in with the sketch
-      const fs = def.chip === "esp32" ? [...b.sources, { name: ESP32_BRIDGE_FILE, content: ESP32_BRIDGE }] : b.sources
+      const fs = def.chip === "esp32" ? [...b.sources, { name: ESP32_BRIDGE_FILE, content: ESP32_BRIDGE }] : [...b.sources, ...(def.renode?.sources ?? [])]
       const out = await compileSketch(fs, def.fqbn, b.libraries, s.arduinoCliPath, def.buildProps)
       // diagnostics name the file inside the board's folder
       if (b.prefix) out.diagnostics = out.diagnostics.map((d) => ({ ...d, file: b.prefix + d.file }))
-      const fw = def.firmware === "bin" ? out.bin : def.firmware === "image" ? out.image : out.hex
+      // Renode boots the ELF from disk: a copy the next compile won't delete
+      const fw = def.firmware === "bin" ? out.bin : def.firmware === "image" ? out.image : def.firmware === "elf" ? (out.ok && out.elf ? await renodeStage(out.elf) : null) : out.hex
       if (out.ok && fw) {
         setHexes((o) => ({ ...o, [id]: { hex: fw, key: b.key } }))
         return { ...set({ kind: "ok", out }), fw }
@@ -386,7 +438,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
   /** files go in the focused board's folder */
   const pre = focusId ? prefixOf(focusId, mainId) : ""
   const shortName = (n: string) => (n.includes("/") ? n.slice(n.indexOf("/") + 1) : n)
-  const fixed = (n: string) => n === DIAGRAM || shortName(n) === "sketch.ino" || shortName(n) === "libraries.txt"
+  const fixed = (n: string) => n === DIAGRAM || shortName(n) === "sketch.ino" || shortName(n) === "libraries.txt" || shortName(n) === "main.py"
   const addFile = (raw: string) => {
     const n = raw.trim().replace(/[^\w.-]/g, "_")
     if (!n) return
@@ -755,7 +807,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
             {bottom === "serial" && (
               <>
                 <div ref={serialBox} className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-all px-3 py-1.5 font-mono text-xs">{serial || <span className="text-muted-foreground">{running ? `Waiting for Serial output${multi ? ` from ${focusId}` : ""}…` : "Run the sketch to see Serial output here."}</span>}</div>
-                <form className="flex shrink-0 items-center gap-1 border-t p-1" onSubmit={(e) => { e.preventDefault(); if (!running) return; if (board?.chip === "esp32") espSend(serialIn + lineEnd).catch(() => {}); else if (focusId) workers.current.get(focusId)?.postMessage({ type: "serial", text: serialIn + lineEnd } satisfies ToWorker); setSerialIn("") }}>
+                <form className="flex shrink-0 items-center gap-1 border-t p-1" onSubmit={(e) => { e.preventDefault(); if (!running) return; if (board?.chip === "esp32") espSend(serialIn + lineEnd).catch(() => {}); else if (focusId && fedChips.current.has(focusId)) fedChips.current.get(focusId)!.serialWrite(serialIn + lineEnd); else if (focusId) workers.current.get(focusId)?.postMessage({ type: "serial", text: serialIn + lineEnd } satisfies ToWorker); setSerialIn("") }}>
                   <Input value={serialIn} onChange={(e) => setSerialIn(e.target.value)} disabled={!running} placeholder={running ? `Send to ${multi ? focusId : "the sketch"} (Enter)` : "Serial input (while running)"} className="h-7 font-mono text-xs" />
                   <Select value={lineEnd === "\n" ? "nl" : lineEnd === "\r\n" ? "crlf" : "none"} onValueChange={(v) => setLineEnd(v === "nl" ? "\n" : v === "crlf" ? "\r\n" : "")}>
                     <SelectTrigger size="sm" className="h-7 w-28 text-xs"><SelectValue /></SelectTrigger>

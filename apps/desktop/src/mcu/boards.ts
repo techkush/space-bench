@@ -173,10 +173,10 @@ const linuxBoard = (id: string, name: string, linux: NonNullable<BoardDef["linux
   flash: 0, sram, hz: 1e9, pins: piGpio, alias: piAlias, led: "", size: { w: 230, h: 150 }, header: PI_HEADER, linux,
 })
 BOARDS.push(
-  linuxBoard("pi5", "Raspberry Pi 5", "pi5", 4096 << 20),
-  linuxBoard("pi4", "Raspberry Pi 4B", "pi4", 4096 << 20),
-  linuxBoard("pi3", "Raspberry Pi 3B+", "pi3", 1024 << 20),
-  linuxBoard("zero2w", "Raspberry Pi Zero 2 W", "zero2w", 512 << 20),
+  { ...linuxBoard("pi5", "Raspberry Pi 5", "pi5", 4 * 2 ** 30), hz: 2.4e9 },
+  { ...linuxBoard("pi4", "Raspberry Pi 4B", "pi4", 4 * 2 ** 30), hz: 1.8e9 },
+  { ...linuxBoard("pi3", "Raspberry Pi 3B+", "pi3", 2 ** 30), hz: 1.4e9 },
+  { ...linuxBoard("zero2w", "Raspberry Pi Zero 2 W", "zero2w", 0.5 * 2 ** 30), hz: 1e9 },
 )
 export const isLinuxBoard = (b: Pick<BoardDef, "chip"> | undefined | null) => b?.chip === "linux"
 
@@ -213,20 +213,20 @@ const renodeBoard = (o: Omit<BoardDef, "chip" | "firmware" | "flash" | "sram" | 
   ({ chip: "renode", firmware: "elf", flash: 0x100000, sram: 0x20000, hz: 1e9, vcc: 3.3, alias: {}, size: { w: 230, h: 110 }, ...o })
 BOARDS.push(
   renodeBoard({
-    id: "stm32f4disco", type: "sb-stm32f4-discovery", name: "STM32F4 Discovery", fqbn: "STMicroelectronics:stm32:Disco:pnum=DISCO_F407VG", coreUrl: STM32_URL,
+    id: "stm32f4disco", type: "sb-stm32f4-discovery", name: "STM32F4 Discovery", fqbn: "STMicroelectronics:stm32:Disco:pnum=DISCO_F407VG", coreUrl: STM32_URL, hz: 168e6,
     power: { "5V": 5, "3V3": 3.3 }, pins: stmPins("ABCDE"), led: "PD12",
     header: [..."ABCDE"].flatMap((c) => Array.from({ length: 16 }, (_, i) => `P${c}${i}`)).concat(["5V", "3V3", "GND"]),
     renode: { repl: "platforms/boards/stm32f4_discovery.repl", family: "stm32f4", ports: [..."ABCDE"].map((c, i) => ({ name: `gpioPort${c}`, prefix: `P${c}`, base: 0x40020000 + 0x400 * i })), serial: "usart2", uarts: ["usart2"] },
   }),
   renodeBoard({
-    id: "bluepill", type: "sb-stm32-blue-pill", name: "STM32 Blue Pill (F103C8)", fqbn: "STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8", coreUrl: STM32_URL,
+    id: "bluepill", type: "sb-stm32-blue-pill", name: "STM32 Blue Pill (F103C8)", fqbn: "STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8", coreUrl: STM32_URL, hz: 72e6,
     flash: 0x10000, sram: 0x5000, power: { "5V": 5, "3V3": 3.3 }, pins: stmPins("ABC"), led: "PC13",
     header: ["PB12", "PB13", "PB14", "PB15", "PA8", "PA9", "PA10", "PA11", "PA12", "PA15", "PB3", "PB4", "PB5", "PB6", "PB7", "PB8", "PB9", "5V", "GND", "3V3",
       "PB11", "PB10", "PB1", "PB0", "PA7", "PA6", "PA5", "PA4", "PA3", "PA2", "PA1", "PA0", "PC15", "PC14", "PC13"],
     renode: { repl: "platforms/cpus/stm32f103.repl", family: "stm32f1", ports: [..."ABC"].map((c, i) => ({ name: `gpioPort${c}`, prefix: `P${c}`, base: 0x40010800 + 0x400 * i })), serial: "usart1", uarts: ["usart1"], sources: [{ name: "sb_renode_clock.cpp", content: F1_CLOCK }] },
   }),
   renodeBoard({
-    id: "nano33ble", type: "sb-arduino-nano-33-ble", name: "Arduino Nano 33 BLE", fqbn: "arduino:mbed_nano:nano33ble",
+    id: "nano33ble", type: "sb-arduino-nano-33-ble", name: "Arduino Nano 33 BLE", fqbn: "arduino:mbed_nano:nano33ble", hz: 64e6,
     power: { "3V3": 3.3, VIN: 5 }, pins: nanoBlePins, alias: NANO_BLE_ALIAS, led: "P0.13",
     header: ["D13", "3V3", "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "VIN", "GND", "D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12"],
     renode: { repl: "platforms/boards/arduino_nano_33_ble.repl", family: "nrf52", ports: [{ name: "gpio0", prefix: "P0.", base: 0x50000500 }, { name: "gpio1", prefix: "P1.", base: 0x50000800 }], serial: "uart0", uarts: ["uart0"] },

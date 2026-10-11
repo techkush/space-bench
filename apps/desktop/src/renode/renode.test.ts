@@ -24,6 +24,9 @@ import { remap, type JobResult } from "@/lib/engine"
 import { setLoader } from "@/lib/kicad"
 import type { SpiceNetlist } from "@/lib/spice"
 import { boardByType } from "@/mcu/boards"
+import type { Diagram } from "@/mcu/diagram"
+import { FedMachine } from "@/mcu/fed"
+import { McuSim } from "@/mcu/sim"
 import { renodeChip } from "./chip"
 
 const KICAD = path.resolve(import.meta.dirname, "../../public/kicad")
@@ -86,5 +89,33 @@ simulate tran(stop: 1 s, step: 1 ms)
     // 10 kΩ to 3.3 V beats the 40 kΩ internal pull-down
     expect(serial).toContain("btn=1")
     expect(serial).not.toContain("btn=0")
+  })
+
+  it("in the canvas workspace: the board's frames feed the circuit solver (LED on PD12)", async () => {
+    const board = boardByType("sb-stm32f4-discovery")!
+    const diagram: Diagram = {
+      version: 1, author: "", editor: "t", parts: [
+        { type: board.type, id: "disco", top: 0, left: 0, attrs: {} },
+        { type: "wokwi-resistor", id: "r", top: 0, left: 0, attrs: { value: "330" } },
+        { type: "wokwi-led", id: "led", top: 0, left: 0, attrs: { color: "red" } },
+      ],
+      connections: [["disco:PD12", "r:1", "", []], ["r:2", "led:A", "", []], ["led:C", "disco:GND", "", []]],
+    }
+    const chip = await renodeChip(board, build(SKETCH, board))
+    const sim = new McuSim(diagram, "")
+    const fed = sim.machine as FedMachine
+    let serial = ""
+    sim.onSerial = (t) => (serial += t)
+    const T = 0.025
+    fed.feed(await chip.frame({ seconds: 0, digital: [], analog: [] }), 0)
+    const lit: number[] = []
+    for (let i = 0; i < 16; i++) {
+      fed.feed(await chip.frame({ seconds: T, digital: [], analog: [] }), T)
+      lit.push(sim.step(T * 1000, T * 1000).leds.get("led")?.[0] ?? 0)
+    }
+    chip.dispose()
+    expect(Math.max(...lit)).toBeGreaterThan(0.5)
+    expect(Math.min(...lit)).toBeLessThan(0.1)
+    expect(serial).toContain("btn=")
   })
 })

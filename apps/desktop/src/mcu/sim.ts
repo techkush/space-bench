@@ -8,6 +8,7 @@ import { AvrMachine } from "./avr"
 import type { Machine } from "./machine"
 import { Rp2040Machine } from "./rp2040"
 import { Esp32Machine } from "./esp32/machine"
+import { FedMachine } from "./fed"
 import { boardByType, isBoardType, type BoardDef } from "./boards"
 import { Circuit, type Drive, type PartUi, type PinLevel, type Solution } from "./circuit"
 import { HD44780, I2CBus, LcdI2C, NeoPixelDecoder, SSD1306 } from "./devices"
@@ -86,7 +87,10 @@ export class McuSim {
     if (!bp) throw new Error("Add a board (Arduino Uno, Nano, Mega or Raspberry Pi Pico) to the diagram")
     this.board = boardByType(bp.type)!
     this.boardId = bp.id
-    if (this.board.chip === "esp32") {
+    if (this.board.chip === "linux" || this.board.chip === "renode") {
+      // the chip runs on the main thread (Linux VM, Renode); its frames are fed in
+      this.machine = new FedMachine(this.board)
+    } else if (this.board.chip === "esp32") {
       this.machine = new Esp32Machine(this.board)
     } else if (this.board.chip === "rp2040") {
       if (typeof firmware === "string") throw new Error("The Pico needs a .bin flash image")
