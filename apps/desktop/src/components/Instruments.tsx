@@ -1,4 +1,4 @@
-// Instruments (Figma page 05): the bench view, spectrum analyzer, logic analyzer,
+// Instruments: the bench view, spectrum analyzer, logic analyzer,
 // power meter, curve tracer, and the "Instruments & data" panel with data collection.
 import { useEffect, useMemo, useState } from "react"
 import {

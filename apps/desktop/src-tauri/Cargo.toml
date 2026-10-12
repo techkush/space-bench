@@ -3,8 +3,8 @@ name = "spicebench"
 version = "0.1.0"
 description = "Space Bench — circuit design & simulation"
 authors = ["Space Bench"]
-license = ""
-repository = ""
+license = "MIT"
+repository = "https://github.com/techkush/spacebench"
 edition = "2024"
 rust-version = "1.90"
 

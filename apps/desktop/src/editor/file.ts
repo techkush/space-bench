@@ -63,14 +63,14 @@ export async function readDoc(path: string): Promise<Doc> {
   return parseDoc(await readTextFile(path))
 }
 
-const IMPORT_EXT = ["kirk", "cir", "sp", "spice", "net", "ckt"]
-/** Pick a Kirk file or a SPICE netlist to import. */
+const IMPORT_EXT = ["kirk", "kicad_sch", "cir", "sp", "spice", "net", "ckt"]
+/** Pick a Kirk file, a KiCad schematic or a SPICE netlist to import. */
 export async function pickImport(): Promise<{ name: string; text: string; path: string | null } | null> {
   if (!isTauri()) {
     const f = await pickFile(IMPORT_EXT.map((e) => `.${e}`).join(","))
     return f ? { ...f, path: null } : null
   }
-  const path = await open({ filters: [{ name: "Kirk or SPICE netlist", extensions: IMPORT_EXT }, { name: "Kirk", extensions: ["kirk"] }, { name: "SPICE netlist", extensions: IMPORT_EXT.slice(1) }], multiple: false, directory: false })
+  const path = await open({ filters: [{ name: "Kirk, KiCad schematic or SPICE netlist", extensions: IMPORT_EXT }, { name: "Kirk", extensions: ["kirk"] }, { name: "KiCad schematic", extensions: ["kicad_sch"] }, { name: "SPICE netlist", extensions: IMPORT_EXT.slice(2) }], multiple: false, directory: false })
   if (!path || Array.isArray(path)) return null
   return { name: path.split("/").pop() ?? path, text: await readTextFile(path), path }
 }

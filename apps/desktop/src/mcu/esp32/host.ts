@@ -16,10 +16,13 @@ export async function qemuStatus(bin?: string): Promise<string> {
   if (!r.ok) throw new Error(j.error); return j.version
 }
 export async function installQemu(): Promise<string> { if (!isTauri()) throw new Error("Installing QEMU needs the desktop app"); return invoke<string>("esp32_install") }
-export async function espStart(image: string, bin?: string) { need(); if (isTauri()) await invoke("esp32_start", { image, bin: bin || null }); else await post("/api/esp32/start", { image }) }
+/** machine: "esp32" (default), "esp32s3" or "esp32c3" */
+export async function espStart(image: string, bin?: string, machine = "esp32") { need(); if (isTauri()) await invoke("esp32_start", { image, bin: bin || null, machine }); else await post("/api/esp32/start", { image, machine }) }
 export async function espPoll(): Promise<EspPoll> {
   if (isTauri()) return invoke<EspPoll>("esp32_poll")
   return (await fetch("/api/esp32/poll")).json()
 }
 export async function espSend(serial?: string, bridge?: number[]) { if (isTauri()) await invoke("esp32_send", { serial: serial ?? null, bridge: bridge ?? null }); else await post("/api/esp32/send", { serial, bridge }) }
+/** "stop" pauses the chip (and its clock), "cont" resumes it — schematics run it in lockstep */
+export async function espQmp(cmd: "stop" | "cont") { if (isTauri()) await invoke("esp32_qmp", { cmd }); else await post("/api/esp32/qmp", { cmd }) }
 export async function espStop() { if (isTauri()) await invoke("esp32_stop").catch(() => {}); else if (devServer) await post("/api/esp32/stop").catch(() => {}) }

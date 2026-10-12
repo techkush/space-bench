@@ -1,5 +1,4 @@
 //! Element stamps for the real-valued (DC / transient) MNA system.
-//! See engine-spec §3 (stamps), §5.2 (companion models) and §6 (devices).
 
 use crate::circuit::{Circuit, DiodeModel, Element};
 use crate::matrix::Dense;

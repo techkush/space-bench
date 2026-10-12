@@ -29,6 +29,28 @@ export interface ModView {
   bitmap?: { w: number; h: number; data: Uint8Array }
   /** RGB backlight of a Grove LCD */
   backlight?: [number, number, number]
+  /**
+   * a colour screen (TFT, e-paper, greyscale OLED): w×h RGBA pixels. `ver` changes with the
+   * picture (nextImageVer()); frames carry `data` only when it changed — the canvas keeps the rest.
+   */
+  image?: { w: number; h: number; ver: number; data?: Uint8ClampedArray }
+}
+
+/** data: URLs of recent images, by version */
+const imageUrls = new Map<number, string>()
+function imageUrl(im: { w: number; h: number; ver: number; data?: Uint8ClampedArray }): string | null {
+  const hit = imageUrls.get(im.ver)
+  if (hit) return hit
+  if (!im.data || typeof document === "undefined") return null
+  const cv = document.createElement("canvas")
+  cv.width = im.w; cv.height = im.h
+  const ctx = cv.getContext("2d")
+  if (!ctx) return null
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(im.data), im.w, im.h), 0, 0)
+  const url = cv.toDataURL()
+  imageUrls.set(im.ver, url)
+  if (imageUrls.size > 64) imageUrls.delete(imageUrls.keys().next().value!)
+  return url
 }
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -164,31 +186,62 @@ function twoLead(p: CatalogPart, body: string, bw: number, bh: number, labels = 
   return { w, h, svg, pins, live: { x: w / 2 - 6, y: 0, w: 12, h: 6 } }
 }
 
-const GATE_PATH: Record<GateFn, string> = {
-  and: "M0 0 h14 a14 14 0 0 1 0 28 h-14z",
-  nand: "M0 0 h14 a14 14 0 0 1 0 28 h-14z",
-  or: "M0 0 q8 14 0 28 q22 0 30 -14 q-8 -14 -30 -14z",
-  nor: "M0 0 q8 14 0 28 q22 0 30 -14 q-8 -14 -30 -14z",
-  xor: "M4 0 q8 14 0 28 q22 0 30 -14 q-8 -14 -30 -14z M0 0 q8 14 0 28",
-  xnor: "M4 0 q8 14 0 28 q22 0 30 -14 q-8 -14 -30 -14z M0 0 q8 14 0 28",
-  not: "M0 0 l24 14 l-24 14z",
-  buf: "M0 0 l24 14 l-24 14z",
-}
+/**
+ * A logic gate drawn to its inputs: the body is as tall as the input pins need, the output leaves
+ * from the tip on the centre line, and each input line stops where it meets the body (on the
+ * curved back of OR / NOR / XOR). Even input counts skip the middle slot, so the output stays on the
+ * 2.54 mm grid, as in standard gate symbols.
+ */
 function gate(p: CatalogPart, fn: GateFn): Drawing {
+  const P = PITCH
   const ins = p.pins.slice(0, -1)
-  const h = Math.max(4, ins.length + 1) * PITCH
-  const w = 7 * PITCH
+  const n = Math.max(1, ins.length)
+  const slots = n % 2 ? n : n + 1
+  const mid = (slots + 1) / 2
+  // input slot rows (1-based), skipping the middle one for an even count
+  const rows: number[] = []
+  for (let r = 1; rows.length < n; r++) if (n % 2 || r !== mid) rows.push(r)
+  const top = 0.35 * P, bot = (slots + 0.65) * P, c = mid * P, H = bot - top
+  const x0 = 1.6 * P
+  const single = fn === "not" || fn === "buf"
+  const curved = fn === "or" || fn === "nor" || fn === "xor" || fn === "xnor"
   const bubble = fn === "nand" || fn === "nor" || fn === "xnor" || fn === "not"
-  const by = h / 2 - 14
-  let svg = `<g transform="translate(${PITCH * 1.5} ${by})"><path d="${GATE_PATH[fn]}" fill="#fafafa" stroke="#222" stroke-width="1.4"/>${bubble ? `<circle cx="${fn === "not" ? 27 : fn === "nand" ? 31 : 34}" cy="14" r="3" fill="#fafafa" stroke="#222" stroke-width="1.2"/>` : ""}</g>`
+  const r = 0.28 * P
+  const W = single ? Math.max(2.6 * P, H * 0.9) : Math.max(3.4 * P, H * 1.05)
+  const tip = x0 + W
+  // the back of an OR is a curve: where an input line at height y meets it
+  const k = 0.32 * P + H * 0.08
+  const backX = (y: number) => { if (!curved) return x0; const t = (y - top) / H; return x0 + 2 * t * (1 - t) * k }
+  let body: string
+  if (single) body = `M${x0} ${top} L${tip} ${c} L${x0} ${bot} Z`
+  else if (!curved) {
+    // AND / NAND: a flat back, a half-round front
+    const rr = H / 2, xs = tip - rr
+    body = `M${x0} ${top} H${xs} A${rr} ${rr} 0 0 1 ${xs} ${bot} H${x0} Z`
+  } else {
+    body = `M${x0} ${top} Q${x0 + W * 0.55} ${top} ${tip} ${c} Q${x0 + W * 0.55} ${bot} ${x0} ${bot} Q${x0 + k} ${c} ${x0} ${top} Z`
+  }
+  const sw = 1.2
+  let svg = `<path d="${body}" fill="#fafafa" stroke="#222" stroke-width="${sw}" stroke-linejoin="round"/>`
+  if (fn === "xor" || fn === "xnor") svg += `<path d="M${x0 - 0.3 * P} ${top} Q${x0 - 0.3 * P + k} ${c} ${x0 - 0.3 * P} ${bot}" fill="none" stroke="#222" stroke-width="${sw}"/>`
+  const outX = tip + (bubble ? 2 * r : 0)
+  if (bubble) svg += `<circle cx="${tip + r}" cy="${c}" r="${r}" fill="#fafafa" stroke="#222" stroke-width="${sw}"/>`
+  // the part is a whole number of grid steps wide, so both sides land on the grid
+  const w = Math.ceil((outX + 1.2 * P) / P) * P
   const pins: PinPos[] = []
-  const gap = h / (ins.length + 1)
-  ins.forEach((n, i) => { const y = Math.round(((i + 1) * gap) / PITCH) * PITCH || PITCH; pins.push({ name: n, x: 0, y }); svg += `<line x1="0" y1="${y}" x2="${PITCH * 1.5 + 4}" y2="${y}" stroke="#222" stroke-width="1.2"/>` + title(n, 4, y - 2, 4, "#666") })
-  const yo = Math.round(h / 2 / PITCH) * PITCH
-  pins.push({ name: "Y", x: w, y: yo })
-  svg += `<line x1="${PITCH * 1.5 + 36}" y1="${yo}" x2="${w}" y2="${yo}" stroke="#222" stroke-width="1.2"/>` + title("Y", w - 4, yo - 2, 4, "#666")
-  svg += title(fn.toUpperCase(), PITCH * 1.5 + 13, by + 34 + 6, 4.4, "#888")
-  return { w, h: h + 8, svg, pins, live: { x: w - 10, y: yo - 10, w: 8, h: 8 } }
+  ins.forEach((name, i) => {
+    const y = rows[i] * P
+    const xEnd = fn === "xor" || fn === "xnor" ? backX(y) - 0.3 * P : backX(y)
+    pins.push({ name, x: 0, y })
+    svg += `<line x1="0" y1="${y}" x2="${xEnd.toFixed(2)}" y2="${y}" stroke="#222" stroke-width="${sw}"/>` + title(name, 0.55 * P, y - 1.6, 3.6, "#666")
+  })
+  pins.push({ name: "Y", x: w, y: c })
+  svg += `<line x1="${outX}" y1="${c}" x2="${w}" y2="${c}" stroke="#222" stroke-width="${sw}"/>` + title("Y", w - 0.55 * P, c - 1.6, 3.6, "#666")
+  // the gate's name inside its body
+  const label = fn.toUpperCase()
+  const lx = single ? x0 + W * 0.36 : curved ? x0 + W * 0.48 : x0 + W * 0.42
+  svg += title(label, lx, c + 1.6, Math.min(4.6, H / 4.5), "#888")
+  return { w, h: (slots + 1) * P, svg, pins, live: { x: w - 10, y: c - 10, w: 8, h: 8 } }
 }
 
 function ff(p: CatalogPart, label: string): Drawing {
@@ -309,6 +362,11 @@ export function paint(p: CatalogPart, d: Drawing, s: ModView | undefined, attrs:
     const size = 32, x0 = d.w / 2 - size / 2, y0 = 16
     out += `<rect x="${x0 - 2}" y="${y0 - 2}" width="${size + 4}" height="${size + 4}" fill="#111"/>`
     for (let r = 0; r < 8; r++) for (let col = 0; col < 8; col++) out += `<circle cx="${x0 + col * 4 + 2}" cy="${y0 + r * 4 + 2}" r="1.5" fill="${(s.rows[r] ?? 0) & (1 << col) ? "#ff2a2a" : "#3a0d0d"}"/>`
+    return out
+  }
+  if (s.image) {
+    const url = imageUrl(s.image)
+    if (url) out += `<image x="${L.x}" y="${L.y}" width="${L.w}" height="${L.h}" href="${url}" preserveAspectRatio="none" style="image-rendering:pixelated"/>`
     return out
   }
   if (s.bitmap && typeof document !== "undefined") {

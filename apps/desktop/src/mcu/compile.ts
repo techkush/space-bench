@@ -3,7 +3,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core"
 
 export interface SketchFile { name: string; content: string }
 export interface Diagnostic { file: string; line: number; col: number; severity: "error" | "warning" | "note"; message: string }
-export interface CompileOutput { ok: boolean; hex: string | null; bin: Uint8Array | null; /** ESP32: the flash image's path on disk */ image: string | null; log: string; diagnostics: Diagnostic[]; flash?: { used: number; max: number }; ram?: { used: number; max: number } }
+export interface CompileOutput { ok: boolean; hex: string | null; bin: Uint8Array | null; /** ESP32: the flash image's path on disk */ image: string | null; /** the ELF's path on disk (Renode boards boot it) */ elf: string | null; log: string; diagnostics: Diagnostic[]; flash?: { used: number; max: number }; ram?: { used: number; max: number } }
 export interface CliStatus { path: string; version: string; cores: string[] }
 
 const devServer = !isTauri() && import.meta.env.DEV
@@ -36,7 +36,7 @@ export const coreOf = (fqbn: string) => fqbn.split(":").slice(0, 2).join(":")
 export const parseLibraries = (text: string) => text.split(/\r?\n/).map((l) => l.replace(/#.*/, "").trim()).filter(Boolean)
 
 export async function compileSketch(files: SketchFile[], fqbn: string, libraries: string[], bin?: string, props: string[] = []): Promise<CompileOutput> {
-  type Raw = { ok: boolean; hex: string | null; bin?: string | null; image?: string | null; stdout: string; stderr: string; sketch_dir: string }
+  type Raw = { ok: boolean; hex: string | null; bin?: string | null; image?: string | null; elf?: string | null; stdout: string; stderr: string; sketch_dir: string }
   const raw: Raw = isTauri()
     ? await invoke<Raw>("arduino_compile", { files, fqbn, libraries, props, bin: bin || null })
     : devServer ? await post<Raw>("/api/arduino/compile", { files, fqbn, libraries, props })
@@ -46,7 +46,7 @@ export async function compileSketch(files: SketchFile[], fqbn: string, libraries
   const dir = raw.sketch_dir.replace(/^\/private\//, "/")
   const log = (raw.stdout + "\n" + raw.stderr).replaceAll(`/private${dir}/`, "").replaceAll(`${dir}/`, "").replaceAll("sketch.ino", mainName).trim()
   const image = raw.bin ? Uint8Array.from(atob(raw.bin), (c) => c.charCodeAt(0)) : null
-  return { ok: raw.ok, hex: raw.hex, bin: image, image: raw.image ?? null, log, diagnostics: parseDiagnostics(log), ...usage(raw.stdout) }
+  return { ok: raw.ok, hex: raw.hex, bin: image, image: raw.image ?? null, elf: raw.elf ?? null, log, diagnostics: parseDiagnostics(log), ...usage(raw.stdout) }
 }
 
 /** gcc diagnostics: "sketch.ino:12:5: error: 'x' was not declared in this scope" */

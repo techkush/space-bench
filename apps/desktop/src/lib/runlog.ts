@@ -1,4 +1,4 @@
-// Run records for the Simulation process view (Figma page 06): every Simulate
+// Run records for the Simulation process view: every Simulate
 // press, sweep or Monte Carlo becomes a numbered run with its pipeline stages,
 // a timeline, a console and events (recovered / failed) that link back to parts.
 import { useSyncExternalStore } from "react"

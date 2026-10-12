@@ -57,6 +57,20 @@ function polylines(doc: Doc): Pt[][] {
   return out
 }
 
+const IN_CTOR: Record<string, RegExp> = { Tolerance: /\btol:/, Power: /\bpower:/, Voltage: /\bvoltage:/ }
+
+/** R1.footprint = "…" and R1.MPN = "…" lines for what a part's constructor leaves out. */
+function propertyLines(p: Doc["parts"][number], ctor: string): string[] {
+  const out: string[] = []
+  if (p.footprint && !/\bfootprint:/.test(ctor)) out.push(`    ${p.ref}.footprint = ${q(p.footprint)}`)
+  for (const [k, v] of Object.entries(p.fields ?? {})) {
+    if (!v || IN_CTOR[k]?.test(ctor)) continue
+    const name = /^[A-Za-z_]\w*$/.test(k) && !RESERVED.has(k) ? k : `\`${k}\``
+    out.push(`    ${p.ref}.${name} = ${q(v)}`)
+  }
+  return out
+}
+
 export function generateKirk(doc: Doc, nl: Netlist): string {
   const L: string[] = []
   const name = circuitName(doc.title)
@@ -74,12 +88,17 @@ export function generateKirk(doc: Doc, nl: Netlist): string {
   // parts: one declaration per reference (all units of a package share it)
   const seen = new Set<string>()
   const electrical = doc.parts.filter((p) => !isVirtual(p))
+  const props: string[] = []
   for (const p of electrical) {
     if (seen.has(p.ref)) continue
     seen.add(p.ref)
     const ann = p.sim?.Exclude === "1" ? "@nosim " : ""
-    L.push(`    ${ann}${p.ref} = ${partToKirk(p)}`)
+    const ctor = partToKirk(p)
+    L.push(`    ${ann}${p.ref} = ${ctor}`)
+    props.push(...propertyLines(p, ctor))
   }
+  // footprints and fields the constructor doesn't carry (MPN, Manufacturer …)
+  if (props.length) { L.push(""); L.push(...props) }
 
   // connections: one line per net, pins first, then the net
   const byNet = new Map<string, string[]>()

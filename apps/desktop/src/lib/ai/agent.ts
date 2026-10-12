@@ -21,6 +21,22 @@ export interface AgentHost {
   setStimulus(target: string, expr: string): string
   /** move a live control: pot / slider / knob position, switch or button state */
   setInput(part: string, value: string): string
+  /** the boards in the schematic that run a sketch (Arduino, Pico …): their firmware, and the tools it needs */
+  firmware?: FirmwareHost
+}
+
+export interface FirmwareHost {
+  /** the boards, their sketches, the last compile / run */
+  read(ref?: string): string
+  /** create or replace a file of a board's sketch (sketch.ino, .h / .cpp, libraries.txt) */
+  write(ref: string, name: string, content: string): string
+  compile(ref: string): Promise<{ ok: boolean; text: string }>
+  /** run the circuit with the firmware for `seconds`: Serial output, errors */
+  run(seconds: number): Promise<{ ok: boolean; text: string }>
+  /** what the boards need on this computer, and what is missing */
+  checkSetup(): Promise<string>
+  /** install an item check_setup lists — the user is asked first */
+  install(item: string, reason: string): Promise<{ ok: boolean; text: string }>
 }
 
 export type AgentEvent =
@@ -89,6 +105,17 @@ How to work:
 - Pick realistic standard values (E12/E24 resistors, standard capacitors). Explain the key equations briefly (e.g. fc = 1/(2πRC)).
 - Answer concisely. Report simulation results with numbers and units. Don't repeat the whole program in the chat — it is in the editor.
 
+Boards and firmware (circuit + sketch together):
+- An Arduino UNO / Nano / Mega, a Raspberry Pi Pico, an ESP32 … placed in the schematic runs its sketch: its pins drive the circuit, and it reads the circuit's voltages.
+- get_firmware shows each board's sketch and its last compile / run; write_firmware changes a file (sketch.ino, libraries.txt with one Arduino library per line, extra .h / .cpp); compile_firmware compiles; run_with_firmware runs the circuit and the sketch together and returns the Serial output.
+
+Fixing problems — when the user reports an error or asks you to fix something, find the cause and fix it, don't only explain:
+- A sketch that doesn't compile: read the errors (get_firmware), fix the code or libraries.txt, compile again until it compiles, then run_with_firmware and check the Serial output.
+- A simulation that fails (singular matrix, timestep too small, a node with no DC path, a part without a model): get_circuit, fix the circuit (a resistor to ground for a floating node, a realistic value, a missing ground), simulate again.
+- A missing tool ("not installed", "not found", "core is not installed"): check_setup, then install what it lists (the user is asked to allow it; say why), then compile / run again.
+- "Failed to fetch", "Load failed", a refused connection: the simulator or the compiler service of Space Bench isn't reachable (the app's backend or the dev server stopped). Tools can't fix that — tell the user to restart Space Bench, and continue once it is back.
+- Finish by showing it works: the numbers from simulate, or the Serial output from run_with_firmware.
+
 Kirk essentials:
 ${CHEAT_SHEET.map(([c, w]) => `- ${c}  — ${w}`).join("\n")}
 - Units: k, M (mega), m (milli), u, n, p; "1.6k", "100n", "5 V", "1 kHz", "10 ms" are all fine. Comments start with //.
@@ -119,6 +146,11 @@ ${CHEAT_SHEET.map(([c, w]) => `- ${c}  — ${w}`).join("\n")}
   Diodes: 1N4148 1N4001…1N4007 1N5817…1N5819 BAT54. Other values get a generic model.
 - NE555 pins: VCC GND TRIG THRES DISCH OUT RST CONT. OpAmp pins: 1 = +in, 2 = −in, 3 = V+, 4 = V−, 5 = out.
 - Exactly one ground per circuit ("ground GND"); every node needs a DC path to ground.
+- Repeats: for i in 1..8 { R{i} = R(1k)  N{i} -- R{i} -- N{i+1} } (names take i, i+1, 2*i; loops nest; lists: for i in [1, 2, 5]).
+- Properties (inside the circuit): R1.footprint = "Resistor_SMD:R_0603_1608Metric"  R1.MPN = "RC0603FR-0710KL"  R1.tol = 1 %
+  Whole selections: parts(R*).footprint = "…"  parts(C*, value: 100n).MPN = "…"  parts(/U[0-9]+/, on: VCC) … (filters: value lib on footprint or any field).
+- Design rules, checked on every compile: check connected(U1.OUT, R3.1)  check not connected(OUT, VCC)  check parts(C*).footprint
+  check parts(R*).value == 10k  check parts(R*).count == 8 — use them to state what must hold, then fix what fails (V510).
 - AC sweeps need a source with ac: (e.g. Vsin(amp: 1 V, freq: 1 kHz, ac: 1 V)).
 - Measurements: max min avg rms pp final frequency period duty rise_time (transient), fc gain_db phase (AC). e.g. "measure f = frequency(V(OUT))".
 
@@ -155,6 +187,12 @@ export const TOOLS: ToolDef[] = [
   { name: "set_meter", description: "Point the multimeter at a signal (\"V(net)\" or \"I(R1)\").", input_schema: { type: "object", properties: { signal: { type: "string" } }, required: ["signal"] } },
   { name: "set_stimulus", description: "Feed data to an input over time, then simulate tran again to see what happens: a source (\"V1\": supply sag, ripple, noise), a sensor (\"TH1\": temperature, \"LDR1\": light, \"MK1\": sound), a control (\"RV1\" 0…1, \"SW1\" 0/1) or the room (\"room.temp\"). The signal is Kirk, e.g. \"ramp(from: 12 V, to: 9 V, over: 20 ms)\", \"walk(start: 25°C, sd: 0.5°C, every: 1 ms)\", \"5 V + noise(sd: 0.1 V)\". An empty signal removes the feed. Saved in the stimulus { } block.", input_schema: { type: "object", properties: { target: { type: "string" }, signal: { type: "string" } }, required: ["target", "signal"] } },
   { name: "set_input", description: "Move a live control, then simulate again: a Pot / Slider / Knob position (\"0.3\" or \"30%\"), a Switch or Button (\"on\" / \"off\").", input_schema: { type: "object", properties: { part: { type: "string", description: "reference, e.g. RV1 or SW1" }, value: { type: "string" } }, required: ["part", "value"] } },
+  { name: "get_firmware", description: "The boards in the schematic that run a sketch: each one's files (sketch.ino, libraries.txt …) and its last compile errors / run output. Optional ref (A1).", input_schema: { type: "object", properties: { ref: { type: "string" } } } },
+  { name: "write_firmware", description: "Create or replace a file of a board's sketch: sketch.ino, an extra .h / .cpp, or libraries.txt (one Arduino library per line, e.g. \"Adafruit SSD1306\").", input_schema: { type: "object", properties: { ref: { type: "string", description: "the board, e.g. A1" }, name: { type: "string" }, content: { type: "string" } }, required: ["ref", "name", "content"] } },
+  { name: "compile_firmware", description: "Compile a board's sketch with arduino-cli: the errors (fix them and compile again) or the flash used.", input_schema: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] } },
+  { name: "run_with_firmware", description: "Run the circuit and every board's sketch together for a few seconds; returns the Serial output and any error.", input_schema: { type: "object", properties: { seconds: { type: "number", description: "1–10, default 3" } } } },
+  { name: "check_setup", description: "What the schematic's boards need on this computer (arduino-cli and the board core, QEMU, Renode …) and what is missing, with the id to install each.", input_schema: { type: "object", properties: {} } },
+  { name: "install", description: "Install a missing item from check_setup by its id. The user is asked to allow it first; if they decline, stop and tell them how to install it themselves.", input_schema: { type: "object", properties: { item: { type: "string" }, reason: { type: "string", description: "one short sentence for the user: why it is needed" } }, required: ["item", "reason"] } },
   { name: "find_parts", description: "Search the KiCad part library (simulation-ready parts) by name or description, e.g. \"LM317\", \"zener 5.1\", \"logic level mosfet\". Returns Library:Symbol ids to use with lib(\"…\").", input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
 ]
 
@@ -191,6 +229,16 @@ async function runTool(host: AgentHost, name: string, input: Record<string, unkn
       case "remove_probe": return { ok: true, result: host.removeProbe(String(input.signal ?? "")) }
       case "set_meter": return { ok: true, result: host.setMeter(String(input.signal ?? "")) }
       case "find_parts": return { ok: true, result: await host.findParts(String(input.query ?? "")) }
+      case "get_firmware": case "write_firmware": case "compile_firmware": case "run_with_firmware": case "check_setup": case "install": {
+        const fw = host.firmware
+        if (!fw) return { ok: false, result: "Boards and firmware aren't available here" }
+        if (name === "get_firmware") return { ok: true, result: fw.read(input.ref ? String(input.ref) : undefined) }
+        if (name === "write_firmware") { const r = fw.write(String(input.ref ?? ""), String(input.name ?? ""), String(input.content ?? "")); return { ok: !/^Not /.test(r), result: r } }
+        if (name === "compile_firmware") { const r = await fw.compile(String(input.ref ?? "")); return { ok: r.ok, result: r.text } }
+        if (name === "run_with_firmware") { const r = await fw.run(Math.max(1, Math.min(10, Number(input.seconds ?? 3)))); return { ok: r.ok, result: r.text } }
+        if (name === "check_setup") return { ok: true, result: await fw.checkSetup() }
+        const r = await fw.install(String(input.item ?? ""), String(input.reason ?? "")); return { ok: r.ok, result: r.text }
+      }
       case "set_stimulus": { const r = host.setStimulus(String(input.target ?? ""), String(input.signal ?? "")); return { ok: !r.startsWith("Not set"), result: r } }
       case "set_input": { const r = host.setInput(String(input.part ?? ""), String(input.value ?? "")); return { ok: !/^(No |Can't|Unknown)/.test(r), result: r } }
       default: return { ok: false, result: `Unknown tool ${name}` }

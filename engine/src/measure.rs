@@ -1,4 +1,4 @@
-//! Measurement functions behind Kirk `measure` (engine-spec §7).
+//! Measurement functions behind Kirk `measure`.
 //! All work on the accepted solution points with linear interpolation.
 
 use num_complex::Complex64;

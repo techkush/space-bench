@@ -20,7 +20,10 @@ import { PartThumb } from "./McuWorkspace"
 const CORES = [
   { core: "arduino:avr", boards: "Uno, Nano, Mega", url: undefined },
   { core: "rp2040:rp2040", boards: "Raspberry Pi Pico", url: BOARDS.find((b) => b.id === "pico")!.coreUrl },
-  { core: "esp32:esp32", boards: "ESP32", url: BOARDS.find((b) => b.id === "esp32")!.coreUrl },
+  { core: "esp32:esp32", boards: "ESP32, ESP32-S3, ESP32-C3", url: BOARDS.find((b) => b.id === "esp32")!.coreUrl },
+  { core: "ATTinyCore:avr", boards: "ATtiny85", url: BOARDS.find((b) => b.id === "attiny85")!.coreUrl },
+  { core: "STMicroelectronics:stm32", boards: "STM32 (Renode)", url: BOARDS.find((b) => b.id === "bluepill")!.coreUrl },
+  { core: "arduino:mbed_nano", boards: "Nano 33 BLE (Renode)", url: undefined },
 ]
 
 export default function McuStartPage({ dark, onNew, onOpenExample, cliPath, onSettings, listSketches, recent, partsRoot }: { dark: boolean; onNew: (boardType: string) => void; onOpenExample: (id: string) => void; cliPath: string; onSettings: () => void; listSketches: () => Promise<{ name: string; where: string; open: () => void }[]>; recent?: React.ReactNode; partsRoot?: string | null }) {
@@ -47,8 +50,8 @@ export default function McuStartPage({ dark, onNew, onOpenExample, cliPath, onSe
           {BOARDS.filter((b) => !b.variantOf).map((b, i) => (
             <button key={b.id} onClick={() => onNew(b.type)} className={cn("flex flex-col rounded-xl border p-4 text-left transition-colors", i === 0 ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90" : "bg-card hover:border-ring")}>
               <span className={cn("flex size-8 items-center justify-center rounded-md border", i === 0 ? "border-transparent bg-primary-foreground text-primary" : "bg-background")}>{i === 0 ? <Plus className="size-4" /> : <Cpu className="size-4" />}</span>
-              <span className="mt-5 text-[15px] font-medium">New {b.name} sketch</span>
-              <span className={cn("mt-1 text-xs", i === 0 ? "text-primary-foreground/70" : "text-muted-foreground")}>{b.chip.toUpperCase()} · {b.hz / 1e6} MHz · {b.flash >= 1 << 20 ? `${b.flash / (1 << 20)} MB` : `${Math.round(b.flash / 1024)} KB`} flash · {b.vcc} V</span>
+              <span className="mt-5 text-[15px] font-medium">New {b.name} {b.chip === "linux" ? "project" : "sketch"}</span>
+              <span className={cn("mt-1 text-xs", i === 0 ? "text-primary-foreground/70" : "text-muted-foreground")}>{b.chip === "linux" ? `Linux · ${b.hz / 1e9} GHz · ${b.sram / (1 << 30)} GB RAM · Python` : `${b.chip === "renode" ? "Renode" : b.chip.toUpperCase()} · ${b.hz / 1e6} MHz · ${b.flash >= 1 << 20 ? `${b.flash / (1 << 20)} MB` : `${Math.round(b.flash / 1024)} KB`} flash · ${b.vcc} V`}</span>
             </button>
           ))}
         </div>

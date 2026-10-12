@@ -12,7 +12,7 @@ use crate::waveform::Waveform;
 pub type Node = usize;
 
 /// Diode model parameters (Shockley). Series resistance and junction
-/// capacitance arrive with the full diode model (engine-spec §6, phase E8).
+/// capacitance arrive with the full diode model.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct DiodeModel {
     /// Saturation current [A]
@@ -186,7 +186,7 @@ impl Circuit {
         v
     }
 
-    /// Basic topology checks before solving (engine-spec §1: explainable errors).
+    /// Basic topology checks before solving (errors that say which part or net is at fault).
     pub fn validate(&self) -> Result<(), crate::Error> {
         if self.elements.is_empty() {
             return Err(crate::Error::Topology("circuit has no elements".into()));

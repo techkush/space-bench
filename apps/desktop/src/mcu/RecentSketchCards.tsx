@@ -20,7 +20,7 @@ export default function RecentSketchCards({ list, dark, onOpen, onDelete }: { li
               <div className="flex-1" />
               <Badge variant="secondary">{s.project ? s.project : "Sketch"}</Badge>
             </div>
-            <span className="truncate text-xs text-muted-foreground">{timeAgo(s.time)} · Arduino {s.board ? s.board[0].toUpperCase() + s.board.slice(1) : ""} · {s.parts} part{s.parts === 1 ? "" : "s"}</span>
+            <span className="truncate text-xs text-muted-foreground">{timeAgo(s.time)} · {/* older entries keep a short Arduino id ("uno") */ !s.board ? "No board" : s.board.includes(" ") ? s.board : `Arduino ${s.board[0].toUpperCase()}${s.board.slice(1)}`} · {s.parts} part{s.parts === 1 ? "" : "s"}</span>
           </div>
           {onDelete && <button title="Delete (moves the sketch folder to the Trash)" onClick={(e) => { e.stopPropagation(); onDelete(s) }}
             className="absolute right-9 top-2 hidden rounded-md border bg-background p-1 text-muted-foreground hover:text-destructive group-hover:block"><Trash2 className="size-3.5" /></button>}

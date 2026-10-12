@@ -6,6 +6,35 @@ import type { I2CDevice } from "../devices"
 import type { PinTrack } from "../machine"
 import type { ModView } from "./look"
 import type { CatalogPart } from "./types"
+import { PROTO } from "./models"
+
+/**
+ * An SPI peripheral, byte by byte. SPI is full duplex: the byte the device shifts out on MISO is
+ * fixed before the controller's byte arrives, so `out()` is asked first, then `in()` gets MOSI.
+ * The same device works with hardware SPI (SPI.transfer) and with bit-banged clocks.
+ */
+export interface SpiDevice {
+  /** the byte to shift out on MISO next */
+  out(): number
+  /** a byte shifted in from MOSI */
+  in(b: number): void
+  /** CS went low / high */
+  select?(): void
+  deselect?(): void
+  /** SPI mode for bit-banged clocks (default 0); hardware SPI needs nothing */
+  mode?: 0 | 1 | 2 | 3
+  lsbFirst?: boolean
+}
+
+/** A UART on the part's pins (see SimCtx.uart). */
+export interface UartPort {
+  /** send bytes (or text) to the board: hardware RX when the part's TX is on it, else bit-banged */
+  send(data: number[] | string): void
+}
+
+/** Unique version numbers for ModView.image (the canvas caches by it). */
+let imageVersions = 0
+export const nextImageVer = () => ++imageVersions
 
 export interface SimCtx {
   readonly hz: number
@@ -37,6 +66,19 @@ export interface SimCtx {
   peers(kind: string): CatDevice[]
   /** chip state the solver needs (an I²C relay board's channels) */
   setState(patch: Record<string, number>): void
+  /**
+   * An SPI device on this part's pins. Pins default to the part's CS / SCK / MOSI / MISO (or
+   * their usual aliases: SS, NSS, CLK, SCLK, SDI, DIN, SDO, DO, SO …). With hardware SPI the
+   * bytes arrive while CS is low; bit-banged clocks are decoded from the pins.
+   */
+  spi(dev: SpiDevice, pins?: { cs?: string; sck?: string; mosi?: string; miso?: string }): void
+  /** a part's input pin as the board drives it: true high, false low, null not driven / not wired */
+  level(partPin: string): boolean | null
+  /**
+   * A UART on the part's pins: `onByte` gets what the board sends to the part's RX (the board's
+   * hardware TX — Serial / Serial1 — or SoftwareSerial bits); `send` answers on the part's TX.
+   */
+  uart(o: { rx?: string; tx?: string; baud?: number; onByte?: (b: number) => void }): UartPort
 }
 
 export interface CatDevice {
@@ -149,8 +191,40 @@ class OneWire {
   }
 }
 
+// ── I²C address probes the controller bit-bangs ─────────────────────────────────────────────
+/**
+ * Answer a bit-banged address probe (used for every I²C part on the Pico — sim.ts) with an ACK on SDA: arduino-pico's Wire sends a zero-length
+ * write (Adafruit_I2CDevice::detected, a bus scan) by toggling the pins itself, not through the
+ * I²C block, so the bus model never sees it.
+ */
+export function i2cProbeAck(ctx: SimCtx, addrs: number[], powered: () => boolean = () => true) {
+  const scl = ctx.pin("SCL"), sda = ctx.pin("SDA")
+  if (!scl || !sda) return
+  let bits = -1, byte = 0, acking = false, sclHigh = true, sdaHigh = true
+  const high = (pin: string) => ctx.level(pin) !== false
+  const release = () => { if (acking) { acking = false; ctx.drive("SDA", null) } }
+  ctx.hook(sda, () => {
+    const h = high("SDA")
+    if (h === sdaHigh) return
+    sdaHigh = h
+    if (!sclHigh || acking) return
+    if (!h) { bits = 0; byte = 0 } else { bits = -1; release() } // START / STOP
+  })
+  ctx.hook(scl, () => {
+    const h = high("SCL")
+    if (h === sclHigh) return
+    sclHigh = h
+    if (bits < 0) return
+    if (h && bits < 8) { byte = (byte << 1) | (high("SDA") ? 1 : 0); bits++ }
+    else if (h && bits === 8) bits = 9
+    else if (!h && bits === 8 && !acking) { if (addrs.includes(byte >> 1) && powered()) { acking = true; ctx.drive("SDA", { v: 0, r: 50 }) } else bits = -1 }
+    else if (!h && bits === 9) { release(); bits = -1 }
+  })
+}
+
+
 // ── UART (device side) ────────────────────────────────────────────────────────────────────
-function uartSend(ctx: SimCtx, tx: string, bytes: number[], baud = 9600) {
+export function uartSend(ctx: SimCtx, tx: string, bytes: number[], baud = 9600) {
   const rx = ctx.pin(tx)
   if (rx && ctx.serialIn(String.fromCharCode(...bytes))) return
   const bit = 1 / baud
@@ -160,7 +234,7 @@ function uartSend(ctx: SimCtx, tx: string, bytes: number[], baud = 9600) {
     for (const l of levels) { const v = l ? ctx.vcc : 0; ctx.after(t, () => ctx.drive(tx, { v, r: 100 })); t += bit }
   }
 }
-function uartListen(ctx: SimCtx, rxPin: string, onByte: (b: number) => void, baud = 9600) {
+export function uartListen(ctx: SimCtx, rxPin: string, onByte: (b: number) => void, baud = 9600) {
   const bp = ctx.pin(rxPin)
   let busy = false
   ctx.hook(bp, () => {
@@ -578,5 +652,6 @@ export function makeDevice(c: CatalogPart, ctx: SimCtx): CatDevice | null {
       return {}
     }
   }
-  return null
+  // the models in catalog/models/ (one file per family of parts)
+  return PROTO[m.kind]?.(c, ctx) ?? null
 }

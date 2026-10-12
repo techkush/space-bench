@@ -8,7 +8,11 @@ import { blankSketch, type SketchFileData } from "./examples"
 import { boardsOf } from "./multiboard"
 import type { SketchDoc } from "./McuWorkspace"
 
-const SOURCE = /\.(ino|h|hpp|c|cpp|txt)$/
+// a Raspberry Pi's program is Python: main.py, its modules, requirements.txt
+const SOURCE = /\.(ino|h|hpp|c|cpp|txt|py)$/
+/** the board's own files in order: the main program first, the package lists last */
+const order = (main: string) => (a: SketchFileData, b: SketchFileData) =>
+  a.name === main ? -1 : b.name === main ? 1 : /^(libraries|requirements)\.txt$/.test(a.name) ? 1 : /^(libraries|requirements)\.txt$/.test(b.name) ? -1 : a.name.localeCompare(b.name)
 
 /** The folder (relative) of the sketch a file belongs to: firmware/<name>/… → firmware/<name>. */
 export const sketchFolderOf = (relPath: string) => { const m = /^(firmware\/[^/]+)(\/|$)/.exec(relPath); return m ? m[1] : null }
@@ -18,11 +22,12 @@ export async function loadSketch(p: Project, folder: string): Promise<SketchDoc>
   const entries = (await p.fs.list(dir)).filter((e) => !e.dir)
   const files: SketchFileData[] = []
   for (const e of entries) if (SOURCE.test(e.name)) files.push({ name: e.name, content: await p.fs.read(e.path) })
-  // the main .ino first (sketch.ino, or the one named after the folder), libraries.txt last
+  // the main program first (sketch.ino, the .ino named after the folder, or a Pi's main.py), libraries.txt last
   const main = files.find((f) => f.name === "sketch.ino") ?? files.find((f) => f.name === `${baseName(folder)}.ino`) ?? files.find((f) => f.name.endsWith(".ino"))
-  if (!main) throw new Error(`${folder} has no .ino sketch`)
-  files.sort((a, b) => (a === main ? -1 : b === main ? 1 : a.name === "libraries.txt" ? 1 : b.name === "libraries.txt" ? -1 : a.name.localeCompare(b.name)))
-  if (!files.some((f) => f.name === "libraries.txt")) files.push({ name: "libraries.txt", content: "" })
+    ?? files.find((f) => f.name === "main.py") ?? files.find((f) => f.name.endsWith(".py"))
+  if (!main) throw new Error(`${folder} has no program (an .ino sketch or a Raspberry Pi's main.py)`)
+  files.sort(order(main.name))
+  if (main.name.endsWith(".ino") && !files.some((f) => f.name === "libraries.txt")) files.push({ name: "libraries.txt", content: "" })
   const dj = entries.find((e) => e.name === "diagram.json")
   const diagram = dj ? parseDiagram(await p.fs.read(dj.path)) : emptyDiagram()
   // the other boards' sketches: one folder per board, named after its id
@@ -31,7 +36,7 @@ export async function loadSketch(p: Project, folder: string): Promise<SketchDoc>
     if (!(await p.fs.exists(sub))) continue
     const own: SketchFileData[] = []
     for (const e of await p.fs.list(sub)) if (!e.dir && SOURCE.test(e.name)) own.push({ name: e.name, content: await p.fs.read(e.path) })
-    own.sort((a, c) => (a.name === "sketch.ino" ? -1 : c.name === "sketch.ino" ? 1 : a.name === "libraries.txt" ? 1 : c.name === "libraries.txt" ? -1 : a.name.localeCompare(c.name)))
+    own.sort(order(own.some((f) => f.name === "sketch.ino") ? "sketch.ino" : "main.py"))
     files.push(...own.map((f) => ({ ...f, name: `${b.id}/${f.name}` })))
   }
   return { name: baseName(folder), files, diagram }

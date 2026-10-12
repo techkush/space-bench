@@ -43,11 +43,108 @@ const src = (ref: string, kind: "VSIN" | "VPULSE" | "VDC", params: string, x: nu
 const tran = (stop: number, step: number) => ({ stop, step })
 
 interface Example { id: string; title: string; description: string; symbols: string[]; spec: () => Spec }
-/** An example written in Kirk (laid out by the compiler). */
-interface KirkExample { id: string; title: string; description: string; kirk: string }
+/** An example written in Kirk (laid out by the compiler); `firmware`: each board's sketch.ino, by reference. */
+interface KirkExample { id: string; title: string; description: string; kirk: string; firmware?: Record<string, string>; firmwareName?: string }
 
 /** Sensors and live controls: try them in the Room tab. */
 export const KIRK_EXAMPLES: KirkExample[] = [
+  {
+    id: "pi-button-led", title: "Raspberry Pi LED + button",
+    description: "A Raspberry Pi running Linux in the schematic: Python (gpiozero) lights the LED on GPIO17 while SW1 on GPIO27 is held. Press Run, then press SW1. Needs the Linux boards set up (Settings → Microcontrollers).",
+    kirk: `@title("Raspberry Pi LED + button")
+circuit PiButton {
+    ground GND
+    P1 = lib("Connector:Raspberry_Pi_4")
+    R1 = R(330)
+    D1 = LED("Green")
+    SW1 = Button()
+    P1.11 -- R1 -- A -- D1' -- GND
+    P1.13 -- SW1 -- GND
+    P1.6 -- GND
+}
+
+scope Scope1 {
+    ch1 = V(A)
+}
+
+simulate tran(stop: 2 s, step: 1 ms)
+`,
+    firmware: {
+      P1: `# Raspberry Pi in the schematic: GPIO17 (pin 11) lights the LED, GPIO27 (pin 13) reads SW1.
+from gpiozero import LED, Button
+from signal import pause
+
+led = LED(17)
+button = Button(27)  # internal pull-up: pressing SW1 connects GPIO27 to ground
+
+def pressed():
+    print("SW1 pressed - LED on")
+    led.on()
+
+def released():
+    print("SW1 released - LED off")
+    led.off()
+
+button.when_pressed = pressed
+button.when_released = released
+print("Running on Raspberry Pi", led.pin_factory.board_info.model, "- press SW1 in the schematic")
+pause()
+`,
+    },
+  },
+  {
+    id: "arduino-pwm-dac", title: "Arduino PWM DAC",
+    description: "Circuit and firmware together: the Uno sweeps PWM on D9, an RC low-pass turns it into a voltage, and the sketch reads it back on A0 and lights the LED above 2.5 V. Press Simulate (needs arduino-cli).",
+    kirk: `@title("Arduino PWM DAC")
+circuit PwmDac {
+    ground GND
+    A1 = lib("MCU_Module:Arduino_UNO_R3")
+    R1 = R(10k)
+    C1 = C(1u)
+    R2 = R(220)
+    D1 = LED("Red")
+    A1.D9 -- R1 -- OUT -- C1 -- GND
+    A1.A0 -- OUT
+    A1.D13 -- R2 -- LED_A -- D1' -- GND
+    A1.6 -- GND
+}
+
+scope Scope1 {
+    ch1 = V(OUT)
+}
+
+simulate tran(stop: 2 s, step: 1 ms)
+`,
+    firmwareName: "sketch.ino",
+    firmware: {
+      A1: `// PWM DAC: pin 9's PWM through the RC low-pass (R1, C1) becomes a voltage,
+// which the sketch reads back on A0. Edit the schematic or this code and press Run.
+const int pwmPin = 9;
+const int ledPin = 13;
+int duty = 0;
+int step = 5;
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(ledPin, OUTPUT);
+}
+
+void loop() {
+  analogWrite(pwmPin, duty);
+  delay(50);
+  int raw = analogRead(A0);
+  Serial.print("duty ");
+  Serial.print(duty);
+  Serial.print("  A0 = ");
+  Serial.print(raw * 5.0 / 1023, 2);
+  Serial.println(" V");
+  digitalWrite(ledPin, raw > 512 ? HIGH : LOW);
+  duty += step;
+  if (duty >= 255 || duty <= 0) step = -step;
+}
+`,
+    },
+  },
   {
     id: "night-light", title: "Night light (LDR)",
     description: "An LDR and a 2N3904 switch the LED on as it gets dark: the feed dims the light from daylight to night over 20 ms. Open the Lab to feed other light.",
@@ -308,18 +405,19 @@ const EXAMPLE_SPECS: Example[] = [
   },
 ]
 
-export const EXAMPLE_CATEGORIES = ["Basics", "Filters", "Amplifiers", "Oscillators", "Power", "Sensors"] as const
+export const EXAMPLE_CATEGORIES = ["Basics", "Filters", "Amplifiers", "Oscillators", "Power", "Sensors", "Microcontrollers"] as const
 export type ExampleCategory = (typeof EXAMPLE_CATEGORIES)[number]
 const CATEGORY: Record<string, ExampleCategory> = {
   "rc-lowpass": "Filters", "rlc-ringing": "Basics", "half-wave": "Power", led: "Basics", "ce-amp": "Amplifiers",
   "opamp-inv": "Amplifiers", "555-astable": "Oscillators", "7805": "Power",
-  "night-light": "Sensors", thermostat: "Sensors", dimmer: "Sensors",
+  "night-light": "Sensors", thermostat: "Sensors", dimmer: "Sensors", "arduino-pwm-dac": "Microcontrollers", "pi-button-led": "Microcontrollers",
 }
 /** Main symbol of each example (its card icon). */
 const ICON: Record<string, string> = {
   "rc-lowpass": "Device:C", "rlc-ringing": "Device:L", "half-wave": "Device:D", led: "Device:LED", "ce-amp": "Transistor_BJT:2N3904",
   "opamp-inv": "Amplifier_Operational:LM358", "555-astable": "Timer:NE555P", "7805": "Regulator_Linear:L7805",
   "night-light": "Device:R_Photo", thermostat: "Device:Thermistor_NTC", dimmer: "Device:R_Potentiometer",
+  "arduino-pwm-dac": "MCU_Module:Arduino_UNO_R3", "pi-button-led": "Connector:Raspberry_Pi_4",
 }
 export const EXAMPLES = [...EXAMPLE_SPECS, ...KIRK_EXAMPLES].map(({ id, title, description }) => ({ id, title, description, category: CATEGORY[id] ?? "Basics", icon: ICON[id] ?? "Device:R" }))
 
@@ -330,7 +428,9 @@ export async function loadExample(id: string): Promise<Doc> {
     const { compileKirk } = await import("@/kirk/compile")
     const r = await compileKirk(k.kirk)
     if (!r.doc) throw new Error(`example ${id}: ${r.diagnostics.map((d) => d.message).join("; ")}`)
-    return { ...r.doc, description: k.description }
+    // a sketch for an Arduino, main.py for a Raspberry Pi
+    const firmware = k.firmware && Object.fromEntries(Object.entries(k.firmware).map(([ref, content]) => [ref, { files: [{ name: k.firmwareName ?? (content.trimStart().startsWith("#") ? "main.py" : "sketch.ino"), content }] }]))
+    return { ...r.doc, description: k.description, ...(firmware ? { firmware } : {}) }
   }
   const ex = EXAMPLE_SPECS.find((e) => e.id === id) ?? EXAMPLE_SPECS[0]
   await ensureSymbols(ex.symbols)

@@ -182,6 +182,54 @@ current, power and a stress check against its ratings with derating (green < 90 
 90–100 %, red > 100 %, like PSpice Smoke); plots of each feed and of chosen signals; CSV export.
 The AI can feed inputs too (`set_stimulus`).
 
+## Circuit + firmware in one workspace
+
+Put an Arduino in the schematic and simulate it with its sketch:
+
+1. Place **Arduino_UNO_R3**, **Arduino_Nano_v3.x** or **RaspberryPi_Pico** from the part browser
+   (library `MCU_Module`) and wire its pins like any other part — `D9`, `A0`, `+5V`, `GND` …
+   (Kirk: `A1 = lib("MCU_Module:Arduino_UNO_R3")`, then `A1.D9 -- R1 -- OUT`).
+2. The **Firmware** panel opens beside the drawing with a starter sketch. Edit `sketch.ino`; list
+   libraries in `libraries.txt`. Select a board in the schematic to show its sketch.
+3. Press **Run** (or **Simulate** with a Transient analysis). The sketches compile with
+   arduino-cli, then the firmware and the circuit run together: the scope, meters, wire colours
+   and LEDs update live and the **Serial Monitor** shows what the sketch prints (type a line to
+   send it). **Stop** keeps the last two seconds on screen.
+
+How it works: the chips run 20 ms at a time; every pin edge becomes a source on that pin (25 Ω
+output, internal pull-ups), ngspice simulates the circuit over the same 20 ms starting from where
+the last frame ended, and the voltages at the input and ADC pins are what the sketch reads next.
+Outputs are exact to the edge; inputs see the circuit one frame late. Without a running sketch
+(AC, DC sweep, OP) the board is just its 5 V / 3.3 V supplies.
+
+Try **Examples → Microcontrollers → Arduino PWM DAC**: the Uno sweeps PWM through an RC filter
+and reads the voltage back on A0.
+
+## More boards: Raspberry Pi (Linux), STM32, nRF52, ATtiny85, ESP32-S3 / C3
+
+**Raspberry Pi 5, 4B, 3B+, Zero 2 W** run real Linux and Python.
+1. Install QEMU (`brew install qemu`), then **Settings → Microcontrollers → Linux Boards → Set up**:
+   it downloads Debian 13 for arm64 and prepares it as a Raspberry Pi (Raspberry Pi's gpiozero,
+   lgpio and RPi.GPIO, a simulated GPIO controller). About 1 GB and a few minutes, once.
+2. Place a Pi: in a schematic, KiCad's **Connector → Raspberry_Pi_4** (a Pi 4B; put "Pi 5" in its
+   Value for a Pi 5) or **Raspberry_Pi_2_3** (a Pi 3B+; "Zero 2" for a Zero 2 W); in the
+   Microcontrollers canvas, the boards under **Raspberry Pi**.
+3. Write `main.py` (gpiozero, RPi.GPIO, lgpio … as on a real Pi) and press **Run**. The Pi boots in
+   about 3 s; GPIO0–27 on the 40-pin header are the circuit's. `print` goes to the **Program**
+   tab; the **Terminal** is the Pi's console (logged in as `pi`) — `pip install …`, files, anything
+   Linux. Packages you install stay installed.
+
+The Pi isn't cycle-exact: Linux schedules its programs, so timing is real-time-ish (a `sleep(0.1)`
+toggles every ~100 ms). Not yet: I²C / SPI / UART devices on the header, hardware PWM, the desktop.
+
+**STM32F4 Discovery, STM32 Blue Pill, Arduino Nano 33 BLE** run their real firmware on Renode
+(Settings → Microcontrollers → Install). Install the board's Arduino core from the
+Microcontrollers page (STMicroelectronics:stm32, arduino:mbed_nano). In schematics, the bare
+**STM32F407V…** and **STM32F103C8** symbols run as these boards. On the Nano 33 BLE use `Serial1`.
+
+**ATtiny85** runs on avr8js (install ATTinyCore from the Microcontrollers page); its `Serial` is
+software TX on PB0. **ESP32-S3 / ESP32-C3** DevKits run on Espressif's QEMU like the ESP32.
+
 ## Microcontrollers (Arduino)
 
 Start screen → **Microcontrollers** (or ⌘⇧A): an Arduino workspace in the style of
@@ -208,8 +256,40 @@ Wokwi / Velxio, fully local.
 - **Logic Analyser:** pin traces, frequency and duty, VCD export.
 - **Imported Fritzing parts** (.fzpz).
 
+### Every catalogue part is simulated
+No part is "Drawing only" any more: each one is modelled at the register / command / protocol level so its
+usual Arduino library works unchanged. The models live in `src/mcu/catalog/models/`, one family per file, each
+with tests that compile real sketches against the real libraries.
+- **How parts connect:** hardware SPI (`SPI.transfer`, UNO D10–13, Mega 50–53, Pico SPI0/SPI1) reaches the
+  part whose CS is low, and bit-banged SPI works too. A part on the board's hardware TX hears `Serial`
+  (`Serial1` on the Pico), with SoftwareSerial anywhere else. On the Pico, I²C address probes
+  (`begin()`, bus scans) are answered.
+- **SPI sensors / storage:** MAX31856 thermocouple, MAX31865 PT100/PT1000, and a microSD card with a real
+  FAT16 volume (`SD` library; CD pin).
+- **Colour screens:** ILI9341, 2.8" ILI9341 + XPT2046 and 3.5" ILI9488 + XPT2046 (press or drag on the screen
+  to touch), the round GC9A01 for XIAO, Grove 1.22" ST7789, SSD1306 over SPI, and the SSD1327 greyscale OLED.
+- **E-paper (GxEPD2):** 1.54", 2.13" (B/W and 3-colour), 2.9" (B/W and 3-colour), 4.2", 5.65" 7-colour,
+  7.5", plus the Grove 2.13" over UART. The picture changes only on a refresh, while BUSY is active.
+- **Sensors:** BMA456 step counter, BMM150 compass, ADXL372, BMI088, AS3935 lightning (click for a strike),
+  DPS310, SPA06-003, HP206C, and the MLX90640 / MLX90641 / MLX90621 thermal cameras (a scene with a
+  hot spot, shown as a thermal picture).
+- **Modules:** PAG7660 gesture, the RGB Encoder Wheel, PN532 NFC (MIFARE 1K / NTAG213 tags that keep
+  their data), the Grove LED matrices, the M5Stack Chain matrices, the COB LED driver, the recorder, the
+  12-key touch keypad, the fingerprint scanner, and the UART ultrasonic (SMS812).
+- **Communication:** RS-232 and RS-485 pairs, the CAN module (Longan protocol), Wi-Fi AT modules
+  (ESP8285, WizFi360) joining a **WiFi Access Point** part with a small simulated internet (HTTP, echo,
+  NTP), HM-11 BLE and Serial Bluetooth (with each other or a virtual phone), the Wio-E5 (LoRaWAN join and
+  messages, TEST-mode pairs), and Grove LoRa 433 / 868 (RadioHead, range from a distance slider).
+- **AI / voice:** HuskyLens (I²C / UART), Grove Vision AI V2 (SSCMA), the speech and voice recognisers and the
+  DF2301Q (choose what they "hear" and "see"), and ReSpeaker Lite (its I²C control).
+- **On a Raspberry Pi board:** the Camera Module is `/dev/video0` showing a test scene (OpenCV / V4L2;
+  picamera2 can't see it), and the ReSpeaker is a sound card (`arecord`, PyAudio). The assistant installs
+  these add-ons once, asking first.
+
+Limits: modules talk to each other only on the same board. ESP32 boards have no Wi-Fi (QEMU has no radio).
+I²S audio isn't simulated.
+
 Needs `arduino-cli` (`brew install arduino-cli`). The page installs the board cores for you (AVR, RP2040, ESP32). The ESP32 also needs Espressif's QEMU (Settings → Microcontrollers → Install, or ESP-IDF's).
-See [`plan-03.md`](../plan-03.md) for what comes next (Pico, ESP32, Raspberry Pi, breadboard, ngspice check).
 
 ## AI assistant
 **AI** (title bar, the Kirk panel, or ⌘J in the desktop app) opens a chat beside the Kirk editor. Describe a circuit, ask for a
@@ -226,6 +306,21 @@ Two ways to connect (Settings → AI Assistant, or the chip in the panel header)
   (`src-tauri/src/claude_code.rs`); `pnpm dev` in a browser uses the dev endpoint `/api/claude` (`vite-claude.ts`).
   Install: `npm install -g @anthropic-ai/claude-code`, then run `claude` once to log in.
 - **Anthropic API key** — calls the Messages API directly (`src/lib/ai/claude.ts`).
+
+### In the Microcontrollers workspace: it fixes what doesn't run
+The workspace's assistant (`src/mcu/agent.ts`) writes the sketch — or a Raspberry Pi's `main.py` — wires the canvas,
+compiles, runs and reads the Serial output. When something fails it finds the cause and fixes it:
+- **Fix with assistant** — on a failed run (the error toast), a compile error (Output / Problems) and a Raspberry Pi
+  program that crashed (a Python traceback). The assistant gets the error and starts on it.
+- **Missing tools** — `check_setup` lists what the project's boards need on this computer (arduino-cli and the board's
+  core, QEMU and the Raspberry Pi system, Renode, Espressif's QEMU; `src/mcu/setup.ts`); `install` installs one.
+- **On the Pi** — `pi_shell` runs a command on the board (diagnostics, `pip install`, `apt-get install`).
+- **It asks first.** Every install — and every Pi command that installs, removes or uses sudo — opens a dialog showing
+  exactly what will run: *Allow* or *Don't allow*. Read-only checks (`pip list`, `ls`) don't ask. Homebrew packages are
+  limited to `qemu` and `arduino-cli`.
+
+Packages installed on the Pi stay installed: the guest writes to its disk within half a second and is synced before
+the VM stops; a VM left behind by an earlier Space Bench (it held the disk's lock) is cleared on the next run.
 
 ## Next milestones
 1. **PCB next:** footprints from the KiCad footprint library, copper pours / ground planes, push-and-shove routing, 3D view.

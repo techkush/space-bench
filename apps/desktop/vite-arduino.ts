@@ -69,7 +69,9 @@ export function arduinoDev(): Plugin {
             const image = r.ok && fs.existsSync(merged) ? merged : null
             const binFile = path.join(out, "sketch.ino.bin")
             const binData = r.ok && !image && fs.existsSync(binFile) ? fs.readFileSync(binFile).toString("base64") : null
-            send(200, { ok: !!(hex || binData || image), hex, bin: binData, image, stdout: r.stdout, stderr: r.stderr, sketch_dir: sketch })
+            const elfFile = path.join(out, "sketch.ino.elf")
+            const elf = r.ok && fs.existsSync(elfFile) ? elfFile : null
+            send(200, { ok: !!(hex || binData || image || elf), hex, bin: binData, image, elf, stdout: r.stdout, stderr: r.stderr, sketch_dir: sketch })
           } catch (e) { send(500, { error: String(e) }) }
         })
       })

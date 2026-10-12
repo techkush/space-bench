@@ -39,7 +39,7 @@ export class Rp2040Machine implements Machine {
     this.cdc = new USBCDC(this.mcu.usbCtrl)
     this.cdc.onDeviceConnected = () => { this.connected = true; for (const b of this.pending.splice(0)) this.cdc.sendSerialByte(b) }
     this.cdc.onSerialData = (buf) => { this.out += this.decoder.decode(buf, { stream: true }) }
-    this.mcu.uart[0].onByte = (v) => { this.out += String.fromCharCode(v) }
+    this.mcu.uart.forEach((u, port) => { u.onByte = (v) => { if (port === 0) this.out += String.fromCharCode(v); this.onUartTx?.(port, v) } })
     for (const [pin, bp] of Object.entries(board.pins)) {
       const g = this.mcu.gpio[bp.bit]
       if (!g) continue
@@ -117,6 +117,14 @@ export class Rp2040Machine implements Machine {
 
   takeWindow() { return takeWindow(this.track, this.now) }
   schedule(fn: () => void, ticks: number) { this.clock.createAlarm(fn).schedule(Math.max(1, ticks)) }
+
+  onUartTx: ((port: number, b: number) => void) | null = null
+  uartFeed(port: number, bytes: number[]) { for (const b of bytes) this.mcu.uart[port]?.feedByte(b) }
+  /** SPI0 / SPI1 (arduino-pico: SPI on GP16–19, SPI1 on GP10–12). */
+  attachSpi(transfer: (bus: number, mosi: number) => number) {
+    // 16-bit frames (SPI.transfer16 sets DSS to 16) reach the devices as two bytes, MSB first
+    this.mcu.spi.forEach((s, bus) => { s.onTransmit = (v) => s.completeTransmit(s.dataBits > 8 ? ((transfer(bus, (v >> 8) & 0xff) & 0xff) << 8) | (transfer(bus, v & 0xff) & 0xff) : transfer(bus, v) & 0xff) })
+  }
 
   /** Wire (I2C0: GP4 = SDA, GP5 = SCL by default in arduino-pico). */
   attachI2C(events: I2CEvents): I2CController {

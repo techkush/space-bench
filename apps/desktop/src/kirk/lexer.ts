@@ -79,7 +79,13 @@ export function lex(src: string): Token[] {
     }
     if (isIdStart(c) || c === "µ" || c === "Ω") {
       const s = i; i++
-      while (i < src.length && (isId(src[i]) || src[i] === "Ω")) i++
+      for (;;) {
+        while (i < src.length && (isId(src[i]) || src[i] === "Ω")) i++
+        // a name made in a for loop: R{i}, N{i+1}, LED{2*i}_A (no spaces inside the braces)
+        const m = src[i] === "{" ? /^\{[A-Za-z0-9_+\-*]{1,24}\}/.exec(src.slice(i, i + 27)) : null
+        if (!m) break
+        i += m[0].length
+      }
       push("ident", s, i)
       continue
     }

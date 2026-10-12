@@ -1,4 +1,4 @@
-// Settings (Figma page 10): a nav of sections on the left, cards of rows on the right.
+// Settings: a nav of sections on the left, cards of rows on the right.
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import { ArrowLeft, Check, Command, Sparkles, File, Gauge, Info, Layers, Loader2, Microchip, RotateCcw, Settings as SettingsIcon, Sun, Zap } from "lucide-react"
@@ -376,6 +376,8 @@ function Mcu({ s }: { s: Settings }) {
         </Row>
       </Card>
       <QemuCard s={s} />
+      <LinuxCard />
+      <RenodeCard />
       <Card title="Emulator">
         <Row label="Speed" hint="1× is real time: delay(1000) takes one second. Slower speeds help watch fast signals.">
           <Select value={String(s.mcuSpeed)} onValueChange={(v) => setSettings({ mcuSpeed: Number(v) })}>
@@ -403,6 +405,59 @@ function QemuCard({ s }: { s: Settings }) {
       <Row label="qemu-system-xtensa" hint={st ?? (st === null ? err : "Looking in PATH and ~/.espressif/tools…")}>
         <Input className="w-[320px] font-mono" placeholder="Automatic" value={s.esp32QemuPath} onChange={(e) => setSettings({ esp32QemuPath: e.target.value })} />
       </Row>
+    </Card>
+  )
+}
+
+/** STM32 / nRF52 boards on Antmicro's Renode (src/renode/). */
+function RenodeCard() {
+  const [st, setSt] = useState<string | null | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  const check = () => { setSt(undefined); import("@/renode/host").then((m) => m.renodeStatus()).then(setSt).catch(() => setSt(null)) }
+  useEffect(check, [])
+  const install = async () => {
+    setBusy(true)
+    try { const m = await import("@/renode/host"); setSt(await m.installRenode()); toast.success("Renode installed") } catch (e) { toast.error(String(e instanceof Error ? e.message : e)) } finally { setBusy(false) }
+  }
+  return (
+    <Card title="STM32 & nRF52 Emulator (Renode)" badge={st === undefined ? <Badge variant="outline">checking…</Badge> : st ? <Badge variant="secondary" className="bg-success-subtle text-success">found</Badge> : <Badge variant="outline">not found</Badge>}
+      action={isTauri() && !st ? <Button size="sm" disabled={busy} onClick={install}>{busy && <Loader2 className="animate-spin" />}Install (≈75 MB)</Button> : <Button variant="outline" size="sm" onClick={check}>Check</Button>}>
+      <Row label="Boards" hint={st ? `${st.split(" · ")[0]} — STM32F4 Discovery, STM32 Blue Pill and Arduino Nano 33 BLE run their real firmware (bare STM32F407 / F103 chips too, in schematics).` : "Antmicro's Renode (MIT) runs STM32 and nRF52 firmware. It needs the board's Arduino core (installed from the Microcontrollers page)."}>
+        <span className="max-w-[320px] truncate font-mono text-xs text-muted-foreground" title={st ?? ""}>{st?.split(" · ")[1] ?? ""}</span>
+      </Row>
+    </Card>
+  )
+}
+
+/** Raspberry Pi 5 / 4 / 3 / Zero 2 W: Linux in a QEMU VM (src/linux/), set up once. */
+function LinuxCard() {
+  const [st, setSt] = useState<import("@/linux/host").LinuxStatus | null | undefined>(undefined)
+  const [err, setErr] = useState("")
+  const [busy, setBusy] = useState<string | null>(null)
+  const check = () => { setSt(undefined); import("@/linux/host").then((m) => m.linuxStatus()).then(setSt).catch((e) => { setErr(String(e instanceof Error ? e.message : e)); setSt(null) }) }
+  useEffect(check, [])
+  const ready = !!st?.qemu && !!st.boot
+  const setup = async () => {
+    setBusy("Starting…")
+    try {
+      const { setupLinux } = await import("@/linux/provision")
+      await setupLinux((p) => setBusy(`${p.step}/${p.of} · ${p.text}`))
+      toast.success("The Raspberry Pi system is ready")
+      check()
+    } catch (e) { toast.error(String(e instanceof Error ? e.message : e)) } finally { setBusy(null) }
+  }
+  const badge = st === undefined ? <Badge variant="outline">checking…</Badge>
+    : ready ? <Badge variant="secondary" className="bg-success-subtle text-success">ready</Badge>
+    : <Badge variant="outline">{st?.qemu ? "not set up" : "QEMU missing"}</Badge>
+  return (
+    <Card title="Linux Boards (Raspberry Pi 5 · 4 · 3 · Zero 2 W)" badge={badge}
+      action={st?.qemu ? <Button size="sm" variant={ready ? "outline" : "default"} disabled={!!busy} onClick={setup}>{busy && <Loader2 className="animate-spin" />}{ready ? "Set up again" : "Set up (≈1 GB, 3–10 min)"}</Button> : <Button variant="outline" size="sm" onClick={check}>Check</Button>}>
+      <Row label="System" hint={busy ?? (ready
+        ? "Debian 13 with Raspberry Pi's packages (gpiozero, lgpio, RPi.GPIO) — boots as the Pi you place, in about 3 s."
+        : st?.qemu ? "Downloads Debian 13 for arm64 and prepares it as a Raspberry Pi: the GPIO pins become the circuit's." : (st === null ? err : "Linux boards need QEMU: install it with `brew install qemu`, then press Check."))}>
+        <span className="font-mono text-xs text-muted-foreground">{st?.qemu?.split(" · ")[0] ?? ""}</span>
+      </Row>
+      {st?.dir && <Row label="Folder" hint="The Pi's disk lives here; packages you install with pip stay installed."><span className="max-w-[320px] truncate font-mono text-xs text-muted-foreground" title={st.dir}>{st.dir}</span></Row>}
     </Card>
   )
 }
@@ -505,7 +560,7 @@ function Instruments({ s }: { s: Settings }) {
 }
 
 export const SHORTCUTS: { group: string; items: [string, string][] }[] = [
-  { group: "File", items: [[`${MOD}N`, "New circuit"], [`${MOD}O`, "Open…"], [`${MOD}S`, "Save"], [`${MOD}I`, "Import Kirk / netlist…"], [`${MOD}⇧E`, "Examples…"], [`${MOD}⇧H`, "Start screen"], [`${MOD},`, "Settings"]] },
+  { group: "File", items: [[`${MOD}N`, "New circuit"], [`${MOD}O`, "Open…"], [`${MOD}S`, "Save"], [`${MOD}I`, "Import Kirk / KiCad / netlist…"], [`${MOD}⇧E`, "Examples…"], [`${MOD}⇧H`, "Start screen"], [`${MOD},`, "Settings"]] },
   { group: "Edit", items: [[`${MOD}Z`, "Undo"], [`${MOD}⇧Z`, "Redo"], [`${MOD}D`, "Duplicate"], [`${MOD}A`, "Select all"], ["⌫", "Delete selection"], [`${MOD}R / R`, "Rotate"], ["X / Y", "Mirror"], ["Esc", "Cancel / select tool"]] },
   { group: "Tools", items: [["W", "Wire"], ["P", "Probe"], ["H", "Pan"], ["⇧X", "No-connect flag"], ["A", "Add part (part browser)"], [`${MOD}K`, "Search parts"], ["R C L D …", "Quick-place a part"]] },
   { group: "Simulation", items: [["F5", "Simulate"], ["Space", "Play / pause real-time playback"]] },
@@ -532,18 +587,28 @@ function Shortcuts() {
 }
 
 const LICENSES: [string, string, string][] = [
-  ["ngspice", "Modified BSD (3-clause) license", "The circuit simulator; runs as a separate program."],
-  ["KiCad symbol libraries", "CC-BY-SA 4.0 with the KiCad library exception", "Schematic symbols, pin maps and Sim.* fields."],
+  ["KiCad symbol libraries", "CC-BY-SA 4.0 with the KiCad library exception", "Schematic symbols, pin maps and Sim.* fields — converted to JSON/SVG by scripts/build-kicad-symbols.mjs; not covered by Space Bench's MIT licence."],
   ["Generic op-amp model", "Public domain (Holger Vogt, KiCad Simulation_SPICE)", "kicad_builtin_opamp single-pole model."],
+  ["avr8js", "MIT · Uri Shaked / Wokwi", "AVR (Arduino Uno, Nano, Mega, ATtiny85) emulation."],
+  ["rp2040js", "MIT · Uri Shaked / Wokwi", "RP2040 (Raspberry Pi Pico) emulation."],
+  ["RP2040 B1 boot ROM", "BSD-3-Clause · Copyright (c) 2020 Raspberry Pi (Trading) Ltd.", "Boots Pico firmware (via rp2040js)."],
+  ["@wokwi/elements", "MIT · Wokwi", "Board and part drawings in the Microcontrollers workspace."],
+  ["Monaco Editor", "MIT · Microsoft", "Sketch editor."],
+  ["CodeMirror", "MIT", "Kirk code editor."],
+  ["three.js", "MIT", "3D board view."],
+  ["fflate", "MIT", "Compressed files."],
   ["Tauri", "MIT / Apache-2.0", "Desktop shell."],
   ["React", "MIT", "User interface."],
   ["Radix UI · shadcn/ui", "MIT", "Interface components."],
   ["Tailwind CSS", "MIT", "Styling."],
-  ["CodeMirror", "MIT", "Kirk code editor."],
   ["uPlot", "MIT", "Charts."],
   ["Sonner", "MIT", "Notifications."],
   ["Lucide icons", "ISC license", "Icons."],
   ["Geist & Geist Mono", "SIL Open Font License 1.1", "Typefaces."],
+  ["ngspice", "Modified BSD (3-clause) license", "The circuit simulator; installed separately, runs as a program or shared library."],
+  ["arduino-cli", "GPL-3.0 (separate program, not bundled)", "Compiles sketches."],
+  ["QEMU · Espressif QEMU", "GPL-2.0 (separate programs, not bundled)", "Raspberry Pi VM · ESP32 emulation."],
+  ["Renode", "MIT (separate program, not bundled)", "STM32 / nRF52 emulation."],
 ]
 
 function About() {
@@ -559,6 +624,7 @@ function About() {
         <Row label="Circuit design, simulation and measurement" hint="Draw a schematic or write Kirk code — both stay in sync."><span /></Row>
         <Row label="Simulator"><span className="font-mono text-sm">{engine ?? "ngspice not found"}</span></Row>
         <Row label="Platform"><span className="font-mono text-sm">{isTauri() ? "Desktop app" : "Browser (dev)"} · {navigator.platform}</span></Row>
+        <Row label="Licence" hint="Free and open source — github.com/techkush/spacebench"><span className="text-sm">MIT</span></Row>
       </Card>
       <Card title="Third-party components & licenses">
         <div className="divide-y">

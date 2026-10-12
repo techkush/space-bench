@@ -16,18 +16,34 @@ import type { PartUi } from "./circuit"
 import type { Frame } from "./sim"
 import { paintOled } from "./devices"
 import { catalogPart, defineCatalog, type CatalogPart } from "./catalog"
-import type { ModView } from "./catalog/look"
+import { drawingOf, type ModView } from "./catalog/look"
+import { pinEdge, routeAround, tidy } from "./wire-route"
 
 defineCatalog()
 /** what a catalogue part responds to while running: a click, a press, or its own events */
-function interaction(c: CatalogPart | undefined): "toggle" | "press" | "events" | null {
+function interaction(c: CatalogPart | undefined): "toggle" | "press" | "events" | "touch" | null {
   if (!c) return null
   const m = c.model
+  if (m.m === "proto" && m.kind.endsWith("-touch")) return "touch" // a touch screen: press / drag on it
   if (m.m === "digital") return "toggle"
   if (m.m === "button") return m.latch ? "toggle" : "press"
   if (m.m === "proto" && (m.kind === "rfid125" || m.kind === "dualbutton")) return m.kind === "rfid125" ? "toggle" : "press"
   if (m.m === "proto" && ["encoder", "keypad", "irremote", "dialer"].includes(m.kind)) return "events"
+  if (m.m === "proto" && m.kind === "as3935") return "toggle" // a click is a lightning strike
+  if (m.m === "proto" && ["speech-recognizer", "offline-voice", "df2301q"].includes(m.kind)) return "toggle" // a click says the selected command
   return null
+}
+/** where a pointer is on a catalogue part's screen: 0..1 across (tx) and down (ty), or null off the screen */
+function touchPoint(e: React.PointerEvent, p: DiagramPart): { tx: number; ty: number } | null {
+  const c = catalogPart(p.type)
+  if (!c || !p.type.startsWith("sb-")) return null
+  const d = drawingOf(c), r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const rot = (((p.rotate ?? 0) % 360) + 360) % 360, side = rot === 90 || rot === 270
+  const w = side ? r.height : r.width, h = side ? r.width : r.height
+  const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2), a = (-rot * Math.PI) / 180
+  const x = ((dx * Math.cos(a) - dy * Math.sin(a)) / w + 0.5) * d.w, y = ((dx * Math.sin(a) + dy * Math.cos(a)) / h + 0.5) * d.h
+  const tx = (x - d.live.x) / d.live.w, ty = (y - d.live.y) / d.live.h
+  return tx >= 0 && tx <= 1 && ty >= 0 && ty <= 1 ? { tx, ty } : null
 }
 const isInteractive = (type: string) => INTERACTIVE.has(type) || !!interaction(catalogPart(type))
 
@@ -127,9 +143,13 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
   const [wiring, setWiring] = useState<{ from: string; x: number; y: number } | null>(null)
   const [hoverPin, setHoverPin] = useState<string | null>(null)
   const [wireSel, setWireSel] = useState<number | null>(null)
+  /** where the selected wire was clicked (world units): its toolbar opens there */
+  const [wireAt, setWireAt] = useState<{ x: number; y: number } | null>(null)
   const drag = useRef<{ id: string; sx: number; sy: number; left: number; top: number; moved: boolean; carry: { id: string; left: number; top: number }[] } | null>(null)
   const pan = useRef<{ sx: number; sy: number; x: number; y: number } | null>(null)
   const active = useRef(new Map<string, boolean>())
+  /** the touch screen being pressed (its part id) */
+  const touching = useRef<string | null>(null)
 
   // ── measuring pins ─────────────────────────────────────────────────────────────────────
   const measureAll = useCallback(() => {
@@ -217,6 +237,9 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
 
   // ── simulation frame → element state ───────────────────────────────────────────────────
   const oledVer = useRef(new Map<string, number>())
+  /** screens' last pixels, and the version drawn into a Wokwi element's own canvas */
+  const images = useRef(new Map<string, NonNullable<ModView["image"]>>())
+  const drawnVer = useRef(new Map<string, number>())
   useEffect(() => {
     for (const p of diagram.parts) {
       const el = els.current.get(p.id)
@@ -226,6 +249,19 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
       if (cat && !cat.base && !isBoardType(p.type)) {
         // catalogue parts: their view, plus LED brightness from the solver
         const m: ModView | undefined = frame ? { ...frame.mods?.get(p.id), ...(frame.leds.get(p.id)?.length ? { glow: frame.leds.get(p.id) } : {}) } : undefined
+        // a screen's pixels come only when they change: keep the last ones
+        if (m?.image) {
+          const im = m.image, kept = images.current.get(p.id)
+          if (im.data) images.current.set(p.id, im)
+          else if (kept?.ver === im.ver) m.image = kept
+          // Wokwi's own screens (ILI9341) draw into their canvas
+          const cv = (el as { canvas?: HTMLCanvasElement }).canvas
+          const shown = m.image
+          if (cv && shown.data && drawnVer.current.get(p.id) !== shown.ver) {
+            drawnVer.current.set(p.id, shown.ver)
+            cv.getContext("2d")?.putImageData(new ImageData(new Uint8ClampedArray(shown.data), shown.w, shown.h), 0, 0)
+          }
+        }
         if (p.type.startsWith("sb-")) { el.state = m; continue }
         if (t === "wokwi-stepper-motor" && m?.angle !== undefined) el.angle = m.angle
         else if (t === "wokwi-biaxial-stepper" && m?.angle !== undefined) { el.outerHandAngle = m.angle; el.innerHandAngle = (m.rows?.[0] ?? 0) / 100 }
@@ -492,8 +528,17 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
         const rx = pb.x + (pb.x > pa.x ? -1 : 1) * off
         pts = [pa, { x: pa.x, y: stubY }, { x: rx, y: stubY }, { x: rx, y: ry }, { x: pb.x, y: ry }, pb]
       }
-      if (Math.abs(pa.x - pb.x) < 0.5) pts = [pa, pb]
+    } else if (!hints.length) {
+      const part = (e: string) => diagram.parts.find((x) => x.id === splitEnd(e)[0])
+      const pA = part(a), pB = part(b)
+      if (pA && pB) {
+        const ba = bounds(pA, measure[pA.id]), bb = bounds(pB, measure[pB.id])
+        const ea = pinEdge(pa, ba), eb = pinEdge(pb, bb)
+        const lane = (k: string) => { const n = lanes.get(k) ?? 0; lanes.set(k, n + 1); return n }
+        pts = routeAround(pa, ea, ba, lane(`${pA.id}:${ea}`), pb, eb, bb, lane(`${pB.id}:${eb}`))
+      } else pts = routePoints(pa, pb, hints)
     } else pts = routePoints(pa, pb, hints)
+    pts = tidy(pts)
     return { i, color, d: pts.map((p, k) => `${k ? "L" : "M"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "), a, b }
   })
   }, [diagram.connections, diagram.parts, pinPos, measure])
@@ -507,7 +552,11 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
       onPointerDown={onBgDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp} onWheel={onWheel}
       onDragOver={(e) => { if (onDropPart && e.dataTransfer.types.includes(PART_DRAG)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy" } }}
       onDrop={(e) => { const t = e.dataTransfer.getData(PART_DRAG); if (!t || !onDropPart) return; e.preventDefault(); const w = toWorld(e.clientX, e.clientY); onDropPart(t, Math.round(w.x / 5) * 5, Math.round(w.y / 5) * 5) }}>
-      <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}>
+      {/* CSS zoom, not scale(): WebKit (the desktop app's web view) keeps a scaled layer at its
+          100 % bitmap and stretches it, so parts went blurry; zoom lays them out and draws them
+          at the zoomed size, sharp at any zoom */}
+      <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${view.x}px, ${view.y}px)` }}>
+      <div style={{ zoom: view.z }}>
         {[...diagram.parts.filter((p) => isBreadboard(p.type)), ...diagram.parts.filter((p) => !isBreadboard(p.type))].map((p) => (
           <div key={p.id} data-part={p.id} className={cn("absolute", selected === p.id && "outline outline-2 outline-offset-4 outline-primary/70 rounded-sm")}
             style={{ lineHeight: 0, left: p.left, top: p.top, transform: p.rotate ? `rotate(${p.rotate}deg)` : undefined, transformOrigin: "center", cursor: running && isInteractive(p.type) ? "pointer" : "move", display: p.hide ? "none" : undefined }}
@@ -521,15 +570,17 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
                 if (pulse) setTimeout(() => { active.current.set(p.id, false); onUi(p.id, { active: false }) }, 50)
               }
             }}
-            onPointerDown={(e) => { startPart(e, p); if (running && interaction(catalogPart(p.type)) === "press") { const half = e.nativeEvent.offsetX > (e.currentTarget as HTMLElement).offsetWidth / 2 ? "b2" : "b1"; onUi(p.id, { pressed: true, v: { [half]: 1 } }) } }}
-            onPointerUp={() => { if (running && interaction(catalogPart(p.type)) === "press") onUi(p.id, { pressed: false, v: { b1: 0, b2: 0 } }) }}
-            onPointerLeave={() => { if (running && interaction(catalogPart(p.type)) === "press") onUi(p.id, { pressed: false, v: { b1: 0, b2: 0 } }) }}>
+            onPointerDown={(e) => { startPart(e, p); if (running && interaction(catalogPart(p.type)) === "press") { const half = e.nativeEvent.offsetX > (e.currentTarget as HTMLElement).offsetWidth / 2 ? "b2" : "b1"; onUi(p.id, { pressed: true, v: { [half]: 1 } }) }
+              if (running && interaction(catalogPart(p.type)) === "touch") { const t = touchPoint(e, p); if (t) { touching.current = p.id; (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); onUi(p.id, { pressed: true, v: t }) } } }}
+            onPointerMove={(e) => { if (touching.current === p.id) { const t = touchPoint(e, p); if (t) onUi(p.id, { pressed: true, v: t }) } }}
+            onPointerUp={() => { if (touching.current === p.id) { touching.current = null; onUi(p.id, { pressed: false }) } if (running && interaction(catalogPart(p.type)) === "press") onUi(p.id, { pressed: false, v: { b1: 0, b2: 0 } }) }}
+            onPointerLeave={() => { if (touching.current === p.id) { touching.current = null; onUi(p.id, { pressed: false }) } if (running && interaction(catalogPart(p.type)) === "press") onUi(p.id, { pressed: false, v: { b1: 0, b2: 0 } }) }}>
             {createElement(p.type, { ref: (el: El | null) => bind(p, el), style: { display: "flex" }, ...attrProps(p) })}
           </div>
         ))}
         <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width={1} height={1}>
           {wires.map((w) => w && (
-            <g key={w.i} className="pointer-events-auto cursor-pointer" onPointerDown={(e) => { e.stopPropagation(); setWireSel(w.i); onSelect(null) }}>
+            <g key={w.i} className="pointer-events-auto cursor-pointer" onPointerDown={(e) => { e.stopPropagation(); setWireSel(w.i); setWireAt(toWorld(e.clientX, e.clientY)); onSelect(null) }}>
               <path d={w.d} fill="none" stroke="transparent" strokeWidth={8} />
               {wireSel === w.i && <path d={w.d} fill="none" stroke={dark ? "#fff" : "#000"} strokeOpacity={0.35} strokeWidth={6} strokeLinejoin="round" strokeLinecap="round" />}
               <path d={w.d} fill="none" stroke={wireCss(w.color)} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
@@ -558,6 +609,7 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
           })
         })}
       </div>
+      </div>
 
       {hoverPin && (() => {
         const pt = pinPos(hoverPin)
@@ -575,16 +627,30 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
           <Button variant="ghost" size="icon-sm" title="Delete (⌫)" className="hover:text-destructive" onClick={() => remove(sel.id)}><Trash2 /></Button>
         </div>
       )}
-      {wireSel !== null && diagram.connections[wireSel] && (
-        <div className="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-popover px-2 py-1 shadow-md" onPointerDown={(e) => e.stopPropagation()}>
+      {/* the selected wire's toolbar: under the point where the wire was clicked, kept inside the canvas
+          (pinned to the top it covered the canvas's own buttons) */}
+      {wireSel !== null && diagram.connections[wireSel] && (() => {
+        const W = 330, hostW = host.current?.clientWidth ?? 800, hostH = host.current?.clientHeight ?? 600
+        const at = wireAt ?? { x: 0, y: 0 }
+        const left = Math.min(Math.max(8, view.x + at.x * view.z - W / 2), Math.max(8, hostW - W - 8))
+        const below = view.y + at.y * view.z + 14
+        const top = below + 70 > hostH ? view.y + at.y * view.z - 84 : below
+        return (
+        <div className="absolute z-10 flex flex-wrap items-center gap-1 rounded-lg border bg-popover px-2 py-1 shadow-md" style={{ left, top: Math.max(8, top), width: W }} onPointerDown={(e) => e.stopPropagation()}>
           <span className="mr-1 font-mono text-[11px] text-muted-foreground">{diagram.connections[wireSel][0]} → {diagram.connections[wireSel][1]}</span>
           {WIRE_COLORS.map((c) => <button key={c} title={c} className={cn("size-4 rounded-full ring-1 ring-border", diagram.connections[wireSel][2] === c && "ring-2 ring-primary")} style={{ background: wireCss(c) }}
             onClick={() => onChange({ ...diagram, connections: diagram.connections.map((w, i) => (i === wireSel ? [w[0], w[1], c, w[3]] as Connection : w)) }, true)} />)}
           <Button variant="ghost" size="icon-sm" className="hover:text-destructive" title="Delete wire (⌫)" onClick={() => { onChange({ ...diagram, connections: diagram.connections.filter((_, i) => i !== wireSel) }, true); setWireSel(null) }}><Trash2 /></Button>
         </div>
+        )
+      })()}
+      {/* one row: on a narrow canvas the buttons wrap under the badge instead of covering it */}
+      {(badge || (corner && !thumb)) && (
+        <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-wrap items-start justify-between gap-1.5">
+          {badge ?? <span />}
+          {corner && !thumb && <div className="pointer-events-auto ml-auto flex flex-wrap items-center justify-end gap-1" onPointerDown={(e) => e.stopPropagation()}>{corner}</div>}
+        </div>
       )}
-      {badge && <div className="pointer-events-none absolute left-3 top-3 z-10">{badge}</div>}
-      {corner && !thumb && <div className="absolute right-3 top-3 z-10 flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>{corner}</div>}
       {wiring && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-md bg-popover px-2 py-1 text-xs shadow ring-1 ring-border">Click another pin to connect · Esc to cancel</div>}
 
       {!thumb && <div className="absolute bottom-3 right-3 z-10 flex items-center rounded-lg border bg-popover shadow-sm" onPointerDown={(e) => e.stopPropagation()}>

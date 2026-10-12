@@ -8,12 +8,13 @@ import { AvrMachine } from "./avr"
 import type { Machine } from "./machine"
 import { Rp2040Machine } from "./rp2040"
 import { Esp32Machine } from "./esp32/machine"
+import { FedMachine } from "./fed"
 import { boardByType, isBoardType, type BoardDef } from "./boards"
 import { Circuit, type Drive, type PartUi, type PinLevel, type Solution } from "./circuit"
 import { HD44780, I2CBus, LcdI2C, NeoPixelDecoder, SSD1306 } from "./devices"
 import { splitEnd, type Diagram, type DiagramPart } from "./diagram"
 import { catalogPart, controlsOf, type CatalogPart } from "./catalog"
-import { makeDevice, type CatDevice, type SimCtx } from "./catalog/devices"
+import { i2cProbeAck, makeDevice, moduleVcc, uartListen, uartSend, type CatDevice, type SimCtx, type SpiDevice, type UartPort } from "./catalog/devices"
 import { makeChip, type Chip } from "./catalog/i2c"
 import type { ModView } from "./catalog/look"
 
@@ -48,9 +49,36 @@ export interface Frame {
   boards?: Record<string, { led: number; tx: boolean }>
   /** what catalogue parts show (relay on, pixels, digits, meter text …) */
   mods: Map<string, ModView>
+  /** every signal pin of the board as the sketch sees it (the live code view) */
+  live?: Record<string, LivePin>
+  /** the board's supply voltage (ADC full scale) */
+  vcc?: number
+}
+/** One board pin right now: how the sketch set it up and what is on it. */
+export interface LivePin {
+  /** "out" = driven by the sketch, else an input (with its pull) */
+  mode: "out" | "in" | "pullup" | "pulldown"
+  /** volts on the pin: the solved circuit's for a wired pin, else what the sketch drives */
+  v: number
+  /** 0 = low, 1 = high, 2 = floating */
+  level: 0 | 1 | 2
+  /** share of the last frame the pin was high (PWM) */
+  duty: number
+  /** level changes in the last frame */
+  toggles: number
 }
 export interface Snapshot { pins: [string, PinLevel][]; drives: [string, Drive][]; ui: Record<string, PartUi> }
 
+
+/** board pins that carry a hardware SPI clock, by chip: pin → SPI bus */
+const HW_SCK: Record<string, Record<string, number>> = {
+  atmega328p: { "13": 0 }, atmega2560: { "52": 0 },
+  rp2040: { GP2: 0, GP6: 0, GP18: 0, GP22: 0, GP10: 1, GP14: 1, GP26: 1 },
+}
+/** board pins of the hardware UARTs, by chip: the board's TX (a part listens) and RX (a part answers) → port */
+const HW_UART_TX: Record<string, Record<string, number>> = { atmega328p: { "1": 0 }, atmega2560: { "1": 0 }, rp2040: { GP0: 0, GP12: 0, GP16: 0, GP4: 1, GP8: 1, GP20: 1 } }
+const HW_UART_RX: Record<string, Record<string, number>> = { atmega328p: { "0": 0 }, atmega2560: { "0": 0 }, rp2040: { GP1: 0, GP13: 0, GP17: 0, GP5: 1, GP9: 1, GP21: 1 } }
+const pickPin = (pins: string[], names: string[]) => names.find((n) => pins.includes(n))
 
 export class McuSim {
   readonly machine: Machine
@@ -77,6 +105,12 @@ export class McuSim {
   private chips = new Map<string, Chip>()
   private serialActive = 0
   onSerial: ((text: string) => void) | null = null
+  /** SPI devices: the board pin their CS is on, and the hardware bus their clock is on (-1: bit-banged only) */
+  private spiDevs: { cs: string | null; bus: number; dev: SpiDevice }[] = []
+  /** parts listening to a hardware UART's TX, by port */
+  private uartTx = new Map<number, ((b: number) => void)[]>()
+  /** images already sent (part → version) and when, so frames carry pixels only when they change */
+  private imagesSent = new Map<string, { ver: number; at: number }>()
 
   readonly diagram: Diagram
 
@@ -86,7 +120,10 @@ export class McuSim {
     if (!bp) throw new Error("Add a board (Arduino Uno, Nano, Mega or Raspberry Pi Pico) to the diagram")
     this.board = boardByType(bp.type)!
     this.boardId = bp.id
-    if (this.board.chip === "esp32") {
+    if (this.board.chip === "linux" || this.board.chip === "renode") {
+      // the chip runs on the main thread (Linux VM, Renode); its frames are fed in
+      this.machine = new FedMachine(this.board)
+    } else if (this.board.chip === "esp32") {
       this.machine = new Esp32Machine(this.board)
     } else if (this.board.chip === "rp2040") {
       if (typeof firmware === "string") throw new Error("The Pico needs a .bin flash image")
@@ -101,6 +138,8 @@ export class McuSim {
     this.bus = new I2CBus((ev) => this.machine.attachI2C(ev))
     this.machine.onSerial = (s) => { this.serialActive = this.machine.now; this.onSerial?.(s) }
     this.machine.onPinChange = (pins) => this.pinsChanged(pins)
+    this.machine.attachSpi?.((bus, b) => this.spiTransfer(bus, b))
+    this.machine.onUartTx = (port, b) => { for (const f of this.uartTx.get(port) ?? []) f(b) }
     for (const p of diagram.parts) { this.attach(p); this.attachCatalog(p) }
     this.moduleDrives()
     this.sol = this.solveNow()
@@ -202,7 +241,7 @@ export class McuSim {
     const key = (pin: string) => `${p.id}:${pin}`
     const ctls = controlsOf(c.model)
     const hwRx: Record<string, string> = { atmega328p: "0", atmega2560: "0", rp2040: "GP1", esp32: "RX0" }
-    return {
+    const self: SimCtx = {
       hz: m.hz, vcc: this.board.vcc, attrs: p.attrs,
       now: () => m.now,
       pin: (pin) => this.boardPinFor(p.id, pin),
@@ -211,7 +250,7 @@ export class McuSim {
       drive: (pin, d) => this.drive(key(pin), d),
       set: (pin, d) => { if (d) this.drives.set(key(pin), d); else this.drives.delete(key(pin)) },
       after: (s, fn) => m.schedule(fn, Math.max(1, Math.round(s * m.hz))),
-      i2c: (addr, dev) => this.bus.devices.set(addr, dev),
+      i2c: (addr, dev) => { this.bus.devices.set(addr, dev); this.probes(self, c, [addr]) },
       ctl: (k) => {
         const u = this.ui[p.id]
         const v = u?.v?.[k] ?? (k === "value" ? u?.value : undefined)
@@ -225,6 +264,85 @@ export class McuSim {
       serialIn: (text) => { const bp = this.boardPinFor(p.id, "TX"); if (!bp || bp !== hwRx[this.board.chip]) return false; m.serialWrite(text); return true },
       peers: (kind) => [...this.cat.values()].filter((d) => d.kind === kind),
       setState: (patch) => this.setUi(p.id, { v: { ...this.ui[p.id]?.v, ...patch } }),
+      spi: (dev, pins) => this.addSpi(p, c, dev, pins),
+      level: (pin) => { const bp = this.boardPinFor(p.id, pin); return bp ? m.track.get(bp)?.out ?? null : null },
+      uart: (o) => this.addUart(p, self, o),
+    }
+    return self
+  }
+
+  /**
+   * arduino-pico's Wire sends address probes (a zero-length write: Adafruit_I2CDevice::begin, bus
+   * scans) by toggling the pins itself, not through the I²C block the bus model listens to: ACK them.
+   */
+  private probes(ctx: SimCtx, c: CatalogPart, addrs: number[]) {
+    if (this.board.chip !== "rp2040" || !addrs.length) return
+    const hasPower = ["VCC", "VDD", "VIN", "5V", "3V3", "+"].some((p) => c.pins.includes(p))
+    i2cProbeAck(ctx, addrs, () => !hasPower || moduleVcc(c, ctx) > 0)
+  }
+
+  // ── SPI: hardware transfers go to the devices whose CS is low; bit-banged clocks are decoded ──
+  private addSpi(p: DiagramPart, c: CatalogPart, dev: SpiDevice, pins: { cs?: string; sck?: string; mosi?: string; miso?: string } = {}) {
+    const csPin = pins.cs ?? pickPin(c.pins, ["CS", "SS", "NSS", "CSN", "TFT_CS", "LCD_CS", "CE"]) ?? "CS"
+    const sckPin = pins.sck ?? pickPin(c.pins, ["SCK", "CLK", "SCLK", "SCL"]) ?? "SCK"
+    const mosiPin = pins.mosi ?? pickPin(c.pins, ["MOSI", "SDI", "DIN", "DI", "SDA"]) ?? "MOSI"
+    const misoPin = pins.miso ?? pickPin(c.pins, ["MISO", "SDO", "DO", "SO", "DOUT"]) ?? "MISO"
+    const cs = this.boardPinFor(p.id, csPin), sck = this.boardPinFor(p.id, sckPin), mosi = this.boardPinFor(p.id, mosiPin)
+    const bus = sck ? HW_SCK[this.board.chip]?.[sck] ?? -1 : -1
+    this.spiDevs.push({ cs, bus, dev })
+    const misoKey = `${p.id}:${misoPin}`
+    // chip select (a part with its CS not wired is always selected)
+    let selected = !cs, bits = 0, inByte = 0, outByte = 0xff
+    /** the MISO level driven now (-1 released): re-driven only when it changes, so write-only bit-banged streams don't re-solve per bit */
+    let misoBit = -1
+    if (cs) this.hook(cs, () => {
+      // selected only while CS is driven low (an undriven pin at reset isn't a select)
+      const low = this.machine.track.get(cs)?.out === false
+      if (low && !selected) { selected = true; bits = 0; inByte = 0; dev.select?.() }
+      else if (!low && selected) { selected = false; dev.deselect?.(); misoBit = -1; this.drive(misoKey, null) }
+    })
+    // bit-banged clocks: the controller reads MISO and has set MOSI by the sampling edge
+    const mode = dev.mode ?? 0, sampleOnRise = ((mode >> 1) ^ (mode & 1)) === 0
+    if (sck) this.hook(sck, (high) => {
+      if (!selected || high !== sampleOnRise) return
+      const k = dev.lsbFirst ? bits : 7 - bits
+      if (bits === 0) outByte = dev.out() & 0xff
+      const bit = (outByte >> k) & 1
+      if (bit !== misoBit) { misoBit = bit; this.drive(misoKey, { v: bit ? this.board.vcc : 0, r: 100 }) }
+      if (this.level(mosi)) inByte |= 1 << k
+      if (++bits === 8) { dev.in(inByte); bits = 0; inByte = 0 }
+    })
+  }
+  private spiTransfer(bus: number, b: number): number {
+    let miso = 0xff
+    for (const d of this.spiDevs) {
+      if (d.bus !== bus || (d.cs && this.machine.track.get(d.cs)?.out !== false)) continue
+      miso &= d.dev.out()
+      d.dev.in(b)
+    }
+    return miso
+  }
+
+  // ── UART: a part's RX on the board's hardware TX hears Serial / Serial1; elsewhere bits are decoded ──
+  private addUart(p: DiagramPart, ctx: SimCtx, o: { rx?: string; tx?: string; baud?: number; onByte?: (b: number) => void }): UartPort {
+    const rxPin = o.rx ?? "RX", txPin = o.tx ?? "TX", baud = o.baud ?? 9600
+    const chip = this.board.chip
+    if (o.onByte) {
+      const bp = this.boardPinFor(p.id, rxPin)
+      const port = bp ? HW_UART_TX[chip]?.[bp] : undefined
+      if (port !== undefined) this.uartTx.set(port, [...(this.uartTx.get(port) ?? []), o.onByte])
+      else uartListen(ctx, rxPin, o.onByte, baud)
+    }
+    const txBp = this.boardPinFor(p.id, txPin)
+    const txPort = txBp ? HW_UART_RX[chip]?.[txBp] : undefined
+    // the idle line is high
+    this.drives.set(`${p.id}:${txPin}`, { v: this.board.vcc, r: 100 })
+    return {
+      send: (data) => {
+        const bytes = typeof data === "string" ? Array.from(new TextEncoder().encode(data)) : data
+        if (txPort !== undefined && this.machine.uartFeed) this.machine.uartFeed(txPort, bytes)
+        else uartSend(ctx, txPin, bytes, baud)
+      },
     }
   }
   private attachCatalog(p: DiagramPart) {
@@ -235,6 +353,7 @@ export class McuSim {
       const chip = makeChip(c.model.chip, Number(p.attrs.i2cAddress ?? c.model.addr), ctx)
       if (!chip) return
       for (const [addr, dev] of chip.devices) this.bus.devices.set(addr, dev)
+      this.probes(ctx, c, chip.devices.map(([a]) => a))
       if (chip.lcd) this.lcds.set(p.id, { hd: chip.lcd, part: p })
       if (chip.oled) this.oleds.set(p.id, chip.oled)
       this.chips.set(p.id, chip)
@@ -415,6 +534,13 @@ export class McuSim {
       if (d.kind === "ws2812") mods.set(id, { pix: this.pixels.get(id)?.colors ?? [] })
     }
     for (const [id, c] of this.chips) { const v = c.view?.(); if (v) mods.set(id, { ...mods.get(id), ...v }) }
+    // images: pixels only when the picture changed (or every second, in case a frame was dropped)
+    for (const [id, v] of mods) {
+      if (!v.image) continue
+      const was = this.imagesSent.get(id), wall = Date.now()
+      if (was && was.ver === v.image.ver && wall - was.at < 1000) mods.set(id, { ...v, image: { w: v.image.w, h: v.image.h, ver: v.image.ver } })
+      else this.imagesSent.set(id, { ver: v.image.ver, at: wall })
+    }
     return {
       leds, servo, buzzer, lcd, neopixel,
       oled: new Map([...this.oleds].map(([id, o]) => [id, { ram: o.ram.slice(), on: o.on, invert: o.invert, version: o.version }])),
@@ -425,7 +551,25 @@ export class McuSim {
       i2cMissing: [...this.bus.missing].filter((a) => !this.bus.devices.has(a)),
       snapshot: { pins: [...this.pinLevels()], drives: [...this.drives], ui: this.ui },
       logic: this.logic.splice(0), logicPins: this.wiredPins, mods,
+      live: this.livePins(window), vcc: this.board.vcc,
     }
+  }
+
+  private livePins(window: Map<string, { duty: number; toggles: number }>): Record<string, LivePin> {
+    const live: Record<string, LivePin> = {}
+    const vcc = this.board.vcc
+    for (const pin of Object.keys(this.board.pins)) {
+      const t = this.machine.track.get(pin)
+      if (!t) continue
+      const w = window.get(pin)
+      const mode = t.out !== null ? "out" : t.pullup ? "pullup" : t.pulldown ? "pulldown" : "in"
+      const wired = this.wiredSet.has(pin)
+      const duty = w ? w.duty : t.out ? 1 : 0
+      const v = wired ? this.voltsAt(this.boardId, pin) ?? 0 : t.out !== null ? (w && w.toggles > 1 ? duty * vcc : t.out ? vcc : 0) : t.pullup ? vcc : 0
+      const floating = !wired && t.out === null && !t.pullup && !t.pulldown
+      live[pin] = { mode, v, level: floating ? 2 : v > vcc / 2 ? 1 : 0, duty, toggles: w?.toggles ?? 0 }
+    }
+    return live
   }
 
   /** Voltage of the net a part's pin is on. */

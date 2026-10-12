@@ -27,7 +27,7 @@ const SUGGESTIONS = [
 ]
 
 const TOOL_ICON: Record<string, typeof Code2> = { write_kirk: Code2, simulate: Activity, add_probe: Gauge, remove_probe: Gauge, set_meter: Gauge, measure: Gauge, find_parts: Search, get_circuit: Cpu }
-const TOOL_LABEL: Record<string, string> = { write_kirk: "Wrote the circuit", simulate: "Simulated", add_probe: "Probe", remove_probe: "Probe", set_meter: "Multimeter", measure: "Measured", find_parts: "Searched parts", get_circuit: "Read the circuit" }
+const TOOL_LABEL: Record<string, string> = { write_kirk: "Wrote the circuit", simulate: "Simulated", add_probe: "Probe", remove_probe: "Probe", set_meter: "Multimeter", measure: "Measured", find_parts: "Searched parts", get_circuit: "Read the circuit", get_firmware: "Read the firmware", write_firmware: "Wrote the sketch", compile_firmware: "Compiled", run_with_firmware: "Ran with firmware", check_setup: "Checked the setup", install: "Install" }
 
 /** Downscale an image to ≤ 1568 px on the long side (what the model sees anyway) and base64 it. */
 async function readImage(file: File): Promise<Img> {
@@ -81,7 +81,12 @@ export function clearChat(key: string) {
 }
 const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l) } }
 
-export function AiChat({ host, profile, sessionKey = "default", onOpenSettings, onOpenTerminal, onClose }: { host?: AgentHost; profile?: AgentProfile; sessionKey?: string; onOpenSettings: () => void; onOpenTerminal: () => void; onClose: () => void }) {
+export function AiChat({ host, profile, sessionKey = "default", request, onOpenSettings, onOpenTerminal, onClose }: {
+  host?: AgentHost; profile?: AgentProfile; sessionKey?: string
+  /** a message from the app ("Fix with assistant"): sent once (a new id sends again) */
+  request?: { id: number; text: string } | null
+  onOpenSettings: () => void; onOpenTerminal: () => void; onClose: () => void
+}) {
   const s = useSettings()
   const sess = useSyncExternalStore(subscribe, () => sessionOf(sessionKey))
   const { items, history, busy } = sess
@@ -156,6 +161,15 @@ export function AiChat({ host, profile, sessionKey = "default", onOpenSettings, 
       setItems((x) => x.map((y) => (y.kind === "tool" && y.status === "running" ? { ...y, status: "error", summary: "stopped" } : y)))
     }
   }
+
+  // the app's message goes out once the assistant is connected and free; without a connection it waits in the box
+  const asked = useRef(0)
+  useEffect(() => {
+    if (!request || request.id === asked.current || busy || (cli && cliVersion === undefined)) return
+    asked.current = request.id
+    if (ready) void send(request.text)
+    else setText(request.text)
+  }, [request, busy, ready, cli, cliVersion]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className={cn("flex h-full min-h-0 flex-col bg-background", drag && "ring-2 ring-inset ring-ring")}

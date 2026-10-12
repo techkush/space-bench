@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest"
 import type { Diagram } from "./diagram"
 import { MCU_EXAMPLES } from "./examples"
 import { McuSim, type Frame } from "./sim"
+import { badgeFor, findConstants, findSpots, resolvePin } from "./live-code"
 
 const cli = ["/opt/homebrew/bin/arduino-cli", "/usr/local/bin/arduino-cli"].find((p) => fs.existsSync(p))
 const hasAvr = !!cli && execFileSync(cli, ["core", "list"], { encoding: "utf8" }).includes("arduino:avr")
@@ -88,4 +89,19 @@ describe.skipIf(!hasAvr)("IoT projects", { timeout: 300_000 }, () => {
     expect(f.mods.get("motor")!.angle!).not.toBe(0)
   })
   it("dice rolls 1–6", () => { const r = run("iot-dice", 0.2); r.sim.setUi("btn1", { pressed: true }); let out = ""; r.sim.onSerial = (s) => (out += s); for (let i = 0; i < 40; i++) r.sim.step(50, 50); expect(out).toMatch(/rolled [1-6]/) })
+})
+
+describe.skipIf(!hasAvr)("live code view", { timeout: 120_000 }, () => {
+  it("shows the pot's voltage on its analogRead line and the fading LED's PWM", () => {
+    const pot = run("pot", 0.6), code = MCU_EXAMPLES.find((e) => e.id === "pot")!.files[0].content
+    const read = findSpots(code).find((s) => s.kind === "aread")!
+    const pin = resolvePin(read.arg!, findConstants(code), Object.keys(pot.last.live!), "13")
+    expect(pin).toBe("A0")
+    const b = badgeFor(read, pin, pot.last.live!, { vcc: 5, seconds: 0.6, serial: pot.serial })!
+    expect(b.tone).toBe("analog")
+    expect(b.text).toMatch(/A0 2\.\d\d V/)
+    const fade = run("fade", 1)
+    const pwm = Object.values(fade.frames[10].live!).find((p) => p.mode === "out" && p.toggles > 1)
+    expect(pwm?.duty).toBeGreaterThan(0)
+  })
 })

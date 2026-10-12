@@ -1,5 +1,7 @@
 mod arduino;
 mod esp32;
+mod linux;
+mod renode;
 mod claude_code;
 mod ngspice;
 mod ngspice_lib;
@@ -99,13 +101,51 @@ async fn esp32_status(bin: Option<String>) -> Result<String, String> { tauri::as
 #[tauri::command]
 async fn esp32_install() -> Result<String, String> { tauri::async_runtime::spawn_blocking(esp32::install).await.map_err(|e| e.to_string())? }
 #[tauri::command]
-async fn esp32_start(image: String, bin: Option<String>) -> Result<(), String> { tauri::async_runtime::spawn_blocking(move || esp32::start(&image, bin.as_deref())).await.map_err(|e| e.to_string())? }
+async fn esp32_start(image: String, bin: Option<String>, machine: Option<String>) -> Result<(), String> { tauri::async_runtime::spawn_blocking(move || esp32::start(&image, bin.as_deref(), machine.as_deref().unwrap_or("esp32"))).await.map_err(|e| e.to_string())? }
 #[tauri::command]
 fn esp32_poll() -> esp32::Poll { esp32::poll() }
 #[tauri::command]
 fn esp32_send(serial: Option<String>, bridge: Option<Vec<u8>>) -> Result<(), String> { esp32::send(serial, bridge) }
 #[tauri::command]
 fn esp32_stop() { esp32::stop() }
+#[tauri::command]
+fn esp32_qmp(cmd: String) -> Result<(), String> { esp32::qmp_cmd(&cmd) }
+
+/// Linux boards (Raspberry Pi) in a QEMU VM (see linux.rs).
+#[tauri::command]
+async fn linux_status() -> linux::Status { tauri::async_runtime::spawn_blocking(linux::status).await.unwrap() }
+#[tauri::command]
+async fn linux_fetch(url: String, name: String) -> Result<(), String> { tauri::async_runtime::spawn_blocking(move || linux::fetch(&url, &name)).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+async fn linux_disk(base: String, name: String, size: String) -> Result<(), String> { tauri::async_runtime::spawn_blocking(move || linux::disk(&base, &name, &size)).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+async fn linux_save(name: String, data: String, append: bool) -> Result<(), String> { tauri::async_runtime::spawn_blocking(move || linux::save(&name, &data, append)).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+async fn linux_start(opts: linux::StartOptions) -> Result<(), String> { tauri::async_runtime::spawn_blocking(move || linux::start(opts)).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+fn linux_poll() -> linux::Poll { linux::poll() }
+#[tauri::command]
+fn linux_send(console: Option<String>, agent: Option<String>) -> Result<(), String> { linux::send(console, agent) }
+#[tauri::command]
+fn linux_qmp(cmd: String) -> Result<(), String> { linux::qmp_cmd(&cmd) }
+#[tauri::command]
+fn linux_stop() { linux::stop() }
+#[tauri::command]
+async fn brew_install(pkg: String) -> Result<String, String> { tauri::async_runtime::spawn_blocking(move || linux::brew_install(&pkg)).await.map_err(|e| e.to_string())? }
+
+/// Renode boards (STM32 / nRF52) — see renode.rs.
+#[tauri::command]
+async fn renode_status() -> Option<String> { tauri::async_runtime::spawn_blocking(renode::status).await.unwrap_or(None) }
+#[tauri::command]
+async fn renode_install() -> Result<Option<String>, String> { tauri::async_runtime::spawn_blocking(renode::install).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+async fn renode_start(helper: String) -> Result<String, String> { tauri::async_runtime::spawn_blocking(move || renode::start(&helper)).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+async fn renode_cmd(line: String) -> Result<String, String> { tauri::async_runtime::spawn_blocking(move || renode::cmd(&line)).await.map_err(|e| e.to_string())? }
+#[tauri::command]
+fn renode_stage(elf: String) -> Result<String, String> { renode::stage(&elf) }
+#[tauri::command]
+fn renode_stop() { renode::stop() }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -132,7 +172,9 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![simulate, ngspice_run, ngspice_halt, ngspice_alter, ngspice_lib_path, ngspice_version, ngspice_path, claude_code_run, claude_code_cancel, claude_code_version, arduino_compile, arduino_status, arduino_install_core, esp32_status, esp32_install, esp32_start, esp32_poll, esp32_send, esp32_stop])
-    .run(tauri::generate_context!())
-    .expect("error while building tauri application");
+    .invoke_handler(tauri::generate_handler![simulate, ngspice_run, ngspice_halt, ngspice_alter, ngspice_lib_path, ngspice_version, ngspice_path, claude_code_run, claude_code_cancel, claude_code_version, arduino_compile, arduino_status, arduino_install_core, esp32_status, esp32_install, esp32_start, esp32_poll, esp32_send, esp32_stop, esp32_qmp, linux_status, linux_fetch, linux_disk, linux_save, linux_start, linux_poll, linux_send, linux_qmp, linux_stop, brew_install, renode_status, renode_install, renode_start, renode_cmd, renode_stage, renode_stop])
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application")
+    // the emulators are separate processes: stop them with the app (a VM left running keeps its disk locked)
+    .run(|_, e| if let tauri::RunEvent::Exit = e { linux::sync_and_stop(); esp32::stop(); renode::stop(); });
 }

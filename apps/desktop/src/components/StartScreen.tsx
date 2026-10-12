@@ -1,4 +1,4 @@
-// Start screen (Figma page 08): new / import / open, recent projects with previews,
+// Start screen: new / import / open, recent projects with previews,
 // examples, Learn Kirk, the part library and the model database.
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
@@ -179,7 +179,7 @@ function Home(p: Props & { projects: RecentProject[] }) {
     { icon: FileCode2, title: "New from code", desc: "Write Kirk, the schematic draws itself", keys: `${MOD}⇧N`, onClick: () => p.onNewFromCode() },
     { icon: Microchip, title: "New Arduino sketch", desc: "Code, wire and run a microcontroller", keys: `${MOD}⇧A`, onClick: () => p.onNewSketch("wokwi-arduino-uno") },
     { icon: FolderOpen, title: "Open project", desc: "A project folder (.sbproj)", keys: `${MOD}O`, onClick: p.onOpenProject },
-    { icon: Download, title: "Import", desc: "Kirk (.kirk) · netlists (.cir) · old .sbc files", keys: `${MOD}I`, onClick: p.onImport },
+    { icon: Download, title: "Import", desc: "Kirk (.kirk) · KiCad (.kicad_sch) · netlists (.cir) · .sbc", keys: `${MOD}I`, onClick: p.onImport },
   ]
   return (
     <>

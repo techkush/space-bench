@@ -132,7 +132,10 @@ AGPL-3.0.
   - PIO with real timing: rp2040js runs one PIO instruction per step and ignores delays and the clock divider, so `rp2040.ts` steps every state machine on the system clock (delay + 1) × divider.
   - Board drawing `elements/pi-pico.ts` (our own; Wokwi's pin names). The circuit runs at 3.3 V, and pins warn above 12 mA.
   - Verified (`pico.test.ts`): Blink + USB serial, button, ADC + PWM, I²C LCD, NeoPixel through PIO. In the browser it runs at 100 % real time.
-- 2.2 ☐ ATtiny85.
+- **2.2 ☑ ATtiny85** (branch `more-boards`, 2026-10-11) — avr8js with an ATtiny85 profile in `avr.ts`.
+  - ATTinyCore (`ATTinyCore:avr:attinyx5:chip=85,clock=8internal`, 8 MHz). Port B with pin-change and INT0, Timer0 (its own register layout) and avr8js's `ATtinyTimer1`, the 4-channel ADC (ADC0–3 = PB5, PB2, PB4, PB3), watchdog, 512 B EEPROM, one-word vectors.
+  - No USART / TWI / SPI: ATTinyCore's `Serial` is bit-banged TX on PB0, decoded from its edges (the baud is found from the shortest run).
+  - In the canvas (catalogue entry) and in schematics (KiCad `MCU_Microchip_ATtiny:ATtiny85*`). Verified (`attiny.test.ts`): `millis()` timing, ADC 512 at 2.5 V, Serial, a bare ATtiny85 blinking an LED on ngspice.
 - **2.3 ☑ ESP32** on Espressif's QEMU (`qemu-system-xtensa`, found in PATH or `~/.espressif/tools`, or installed from Settings → Microcontrollers into `~/Library/Application Support/Space Bench`).
   - Espressif's QEMU doesn't model GPIO levels. A **bridge** (`esp32/bridge.ts`, a C++ file added to the sketch when it runs in the emulator) overrides the core's weak `pinMode` / `digitalWrite` / `digitalRead` / `analogRead`. It wraps ESP-IDF's LEDC calls (`--wrap=ledc_channel_config,ledc_timer_config,ledc_set_duty`), so PWM is reported per pin.
   - Pin activity goes out over **UART2** as 5-byte frames; input levels and ADC voltages come back the same way.
@@ -141,10 +144,21 @@ AGPL-3.0.
   - Built with `FlashMode=dio` (QIO panics in QEMU).
   - Verified (`esp32.test.ts`): Blink, button → `digitalRead`, pot → `analogRead` ≈ 2400, PWM dimming. In the browser: 100 % real time.
   - Not yet: I²C / SPI devices on the ESP32 (no bus bridge), interrupts on input changes, Wi-Fi.
-- **2.4 ☐ Raspberry Pi 3** — assessed, not built.
-  - QEMU's `raspi3b` machine does model the BCM2835 GPIO registers, so a GPIO bridge could poll GPLEV0 over QMP.
-  - It needs Homebrew QEMU (`qemu-system-aarch64`, ~1 GB with dependencies) and a Raspberry Pi OS Lite image (~450 MB), and it boots Linux in ~1–2 minutes.
-  - The plan: download both on request, boot with `-M raspi3b`, run the user's Python over the serial console, mirror GPIO to the canvas.
+  - **ESP32-S3 DevKitC-1 and ESP32-C3 DevKitM-1** (2026-10-11): `-M esp32s3` (xtensa) and `-M esp32c3 -icount 3` (`qemu-system-riscv32`, installed with the xtensa build). QEMU wires only UART0/UART1 on these, so the bridge (chosen by `CONFIG_IDF_TARGET_*`) uses UART1 at 0x60010000 with 10-bit FIFO counters. Verified (`esp32-variants.test.ts`): Serial, pin writes, `analogRead` ≈ 2047 at 1.65 V. In schematics too (2026-10-11): KiCad ESP32-WROOM-32 / ESP32-S3-WROOM-1 / ESP32-C3-WROOM-02 modules; QEMU is paused between frames over QMP and bridge reports are timed by arrival (a few ms). Verified (`esp32-schematic.test.ts`). Espressif's QEMU is preferred over Homebrew's (which has no ESP32 machines).
+- **2.4 ☑ Raspberry Pi 5 / 4B / 3B+ / Zero 2 W — Linux** (branch `more-boards`, 2026-10-11; `src/linux/`, `linux-guest/`).
+  - No emulator models the Pi 5's hardware (RP1), so the Pis are a QEMU `virt` VM on the host hypervisor (HVF): Debian 13 arm64 — the base of Raspberry Pi OS — plus Raspberry Pi's own archive (gpiozero 2, lgpio, rpi-lgpio = RPi.GPIO for Pi 5). Boots in ~3 s.
+  - The VM identifies as the chosen Pi: `spacebench-identity` rewrites the device tree's model / compatible / `system/linux,revision` at boot (credential `spacebench.board` on the kernel command line), so gpiozero reports e.g. "5B · BCM2712".
+  - GPIO: Debian's kernel lacks `gpio-sim`, so the setup builds it (plus `irq_sim`) from the kernel.org sources of the guest's kernel; a 28-line `pinctrl-rp1` chip (GPIO0–27). The agent (`spacebench-agent`, virtio-serial) reports pin changes with guest timestamps and sets input levels through the simulated pulls (re-applied when a program sets a line's bias).
+  - Lockstep: the agent times each frame by the guest clock; the VM is paused (QMP `stop`, its clock too) while ngspice simulates. ~70 % of real time in tests.
+  - One-time setup (Settings → Microcontrollers → Linux Boards, `provision.ts` + `provision.sh`): ≈ 1 GB, ~3 min. Direct kernel boot afterwards; the agent updates itself from the app.
+  - Schematics: KiCad `Connector:Raspberry_Pi_4` (Value "Pi 5" → Pi 5) and `Raspberry_Pi_2_3` (Value "Zero 2" → Zero 2 W). Canvas: catalogue boards. `main.py` runs as the pi user; the Firmware panel has a Terminal on the console.
+  - Verified (`linux.test.ts`): gpiozero LED + Button through ngspice, the example's `when_pressed` callback, the canvas solver.
+  - Not yet: I²C / SPI / UART devices on the header, hardware PWM, the desktop (GUI), several Pis at once.
+- **2.4b ☑ Renode boards: STM32F4 Discovery, STM32 Blue Pill, Arduino Nano 33 BLE** (`src/renode/`, `renode/sb_renode.py`).
+  - Antmicro's Renode (MIT, portable macOS build installed from Settings) runs the real ELF; Space Bench drives its monitor. The helper hooks every GPIO line (virtual timestamps), reads pin modes / pulls from the registers (STM32F4, STM32F1, nRF52 layouts), captures the UART and runs exact `RunFor` steps. The SysTick follows `SystemCoreClock`.
+  - Blue Pill builds get a `SystemClock_Config` that stays on the 8 MHz HSI (the F1 model has no clock tree). Bare `STM32F407V*` / `STM32F103C8` KiCad symbols are programmable parts.
+  - Verified (`renode.test.ts`): a bare STM32F407 blinking an LED and reading a pulled-up input on ngspice; the canvas solver.
+  - Tried and not working yet: STM32 Black Pill (F401/F411 builds hang Renode's F4 model), Arduino Uno R4 Minima (the core's USB set-up never finishes on Renode's RA4M1). No ADC on these platforms yet.
 - **2.5 ☐ Pico W Wi-Fi** — assessed, not built.
   - The CYW43439 radio is driven over PIO-gSPI with a binary WLAN firmware blob. Emulating it means implementing the chip's SPI protocol, its firmware boot handshake and an 802.11 / Ethernet bridge to the host (picowi documents the driver side).
   - That is a project of its own; plain Pico sketches run today.

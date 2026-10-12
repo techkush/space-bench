@@ -144,7 +144,7 @@ export function KirkEditor(props: Props) {
         ...nets.map((n) => ({ label: /^[A-Za-z_]\w*$/.test(n) ? n : `\`${n}\``, type: "constant", detail: "net" })),
         ...FUNCTIONS.map((f) => ({ label: f, type: "function", apply: `${f}(` })),
         ...["V(", "I("].map((s) => ({ label: s, type: "function", detail: "signal" })),
-        ...["circuit", "ground", "supply", "simulate", "measure", "assert", "scope", "meter", "sweep", "montecarlo", "temp", "nc"].map((k) => ({ label: k, type: "keyword" })),
+        ...["circuit", "ground", "supply", "simulate", "measure", "assert", "check", "for", "parts", "scope", "meter", "sweep", "montecarlo", "temp", "nc"].map((k) => ({ label: k, type: "keyword" })),
       ],
       validFor: /^\w*$/,
     }

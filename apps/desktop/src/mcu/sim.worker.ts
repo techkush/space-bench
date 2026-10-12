@@ -4,6 +4,8 @@ import type { PartUi } from "./circuit"
 import type { Diagram } from "./diagram"
 import { McuSim } from "./sim"
 import { Esp32Machine } from "./esp32/machine"
+import { FedMachine } from "./fed"
+import type { FrameOut } from "@/cosim/chip"
 
 export type ToWorker =
   | { type: "start"; diagram: Diagram; hex: string | Uint8Array; speed: number; eeprom?: Uint8Array }
@@ -14,12 +16,16 @@ export type ToWorker =
   | { type: "stop" }
   /** ESP32: bridge bytes from QEMU */
   | { type: "esp32-in"; bytes: number[] }
+  /** Linux / Renode boards: a frame the chip ran (main thread) */
+  | { type: "fed-frame"; frame: FrameOut; seconds: number }
 export type FromWorker =
   | { type: "frame"; frame: import("./sim").Frame }
   | { type: "serial"; text: string }
   | { type: "error"; message: string }
   /** ESP32: bridge bytes for QEMU (input levels, ADC voltages) */
   | { type: "esp32-out"; bytes: number[] }
+  /** Linux / Renode boards: the input levels for the next frame */
+  | { type: "fed-in"; levels: [string, boolean][] }
 
 let sim: McuSim | null = null
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -58,6 +64,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       sim = new McuSim(m.diagram, m.hex, m.eeprom)
       sim.onSerial = (text) => post({ type: "serial", text })
       if (sim.machine instanceof Esp32Machine) sim.machine.onOutput = (bytes) => post({ type: "esp32-out", bytes })
+      if (sim.machine instanceof FedMachine) sim.machine.onInputs = (levels) => post({ type: "fed-in", levels })
       speed = m.speed; paused = false; last = performance.now()
       tick()
     } catch (err) { post({ type: "error", message: err instanceof Error ? err.message : String(err) }) }
@@ -66,5 +73,6 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
   else if (m.type === "pause") { paused = m.paused; last = performance.now() }
   else if (m.type === "speed") speed = m.speed
   else if (m.type === "esp32-in") { if (sim?.machine instanceof Esp32Machine) sim.machine.feed(m.bytes) }
+  else if (m.type === "fed-frame") { if (sim?.machine instanceof FedMachine) sim.machine.feed(m.frame, m.seconds) }
   else if (m.type === "stop") { if (timer) clearTimeout(timer); timer = null; sim = null }
 }

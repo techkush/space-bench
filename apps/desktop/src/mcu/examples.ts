@@ -1,6 +1,8 @@
 // Built-in microcontroller examples: a sketch, its libraries and its wiring diagram.
 import { breadboardHoles } from "./elements/breadboard"
+import { boardByType, isLinuxBoard } from "./boards"
 import { boardId, type Connection, type Diagram, type DiagramPart } from "./diagram"
+import { blankFiles } from "./multiboard"
 
 export interface SketchFileData { name: string; content: string }
 export interface McuExample { id: string; title: string; description: string; category: string; files: SketchFileData[]; diagram: Diagram }
@@ -906,8 +908,9 @@ void loop() {
   },
 ]
 
+/** A new sketch on one board: an Arduino sketch, or a Python program on a Linux board (Raspberry Pi). */
 export const blankSketch = (boardType = "wokwi-arduino-uno"): { files: SketchFileData[]; diagram: Diagram } => ({
-  files: files(`
+  files: isLinuxBoard(boardByType(boardType)) ? blankFiles("", true) : files(`
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
@@ -916,5 +919,5 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
 }`),
-  diagram: dia([part(boardType.replace(/^wokwi-/, ""), boardId(boardType), 0, 0)], []),
+  diagram: dia([{ type: boardType, id: boardId(boardType), left: 0, top: 0, attrs: {} }], []),
 })

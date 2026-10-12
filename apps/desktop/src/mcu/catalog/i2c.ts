@@ -3,6 +3,7 @@
 import { HD44780, SSD1306, type I2CDevice } from "../devices"
 import type { ModView } from "./look"
 import type { SimCtx } from "./devices"
+import { CHIPS } from "./models"
 
 export interface Chip {
   devices: [number, I2CDevice][]
@@ -20,7 +21,7 @@ const bcd = (n: number) => ((Math.floor(n / 10) % 10) << 4) | n % 10
 const unbcd = (b: number) => (b >> 4) * 10 + (b & 15)
 
 /** a register file: the first byte written after START is the pointer, then data auto-increments */
-class Regs implements I2CDevice {
+export class Regs implements I2CDevice {
   readonly r = new Uint8Array(256)
   ptr = 0
   private fresh = true
@@ -50,7 +51,7 @@ class Regs implements I2CDevice {
 }
 
 /** 16-bit registers: the pointer selects a register, reads/writes are its high then low byte */
-class Reg16 implements I2CDevice {
+export class Reg16 implements I2CDevice {
   readonly r = new Uint16Array(256)
   ptr = 0
   private n = 0
@@ -68,7 +69,7 @@ class Reg16 implements I2CDevice {
 /** Sensirion style: 16-bit commands, replies are 16-bit words each followed by a CRC-8 */
 const crcS = (a: number, b: number) => { let c = 0xff; for (const x of [a, b]) { c ^= x; for (let i = 0; i < 8; i++) c = c & 0x80 ? ((c << 1) ^ 0x31) & 0xff : (c << 1) & 0xff } return c }
 const words = (ws: number[]) => ws.flatMap((w) => { const h = (w >> 8) & 0xff, l = w & 0xff; return [h, l, crcS(h, l)] })
-class Cmd16 implements I2CDevice {
+export class Cmd16 implements I2CDevice {
   private got: number[] = []
   private out: number[] = []
   private reply: (cmd: number, args: number[]) => number[] | undefined
@@ -81,7 +82,7 @@ class Cmd16 implements I2CDevice {
   read() { return this.out.length ? this.out.shift()! : 0xff }
 }
 /** one-byte command, then a fixed reply */
-class Cmd8 implements I2CDevice {
+export class Cmd8 implements I2CDevice {
   private got: number[] = []
   private out: number[] = []
   private reply: (cmd: number[]) => number[] | undefined
@@ -577,5 +578,6 @@ export function makeChip(chip: string, addr: number, ctx: SimCtx): Chip | null {
     case "dip6": return { devices: [[addr, { start() {}, write() {}, read: () => Math.round(ctx.ctl("bits")) & 0x3f } as I2CDevice]] }
     case "sink": return { devices: [[addr, { start() {}, write() {}, read: () => 0 } as I2CDevice]] }
   }
-  return null
+  // the models in catalog/models/ (one file per family of parts)
+  return CHIPS[chip]?.(ctx, addr) ?? null
 }

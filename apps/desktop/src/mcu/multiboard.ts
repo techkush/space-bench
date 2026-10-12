@@ -49,8 +49,11 @@ export function rehome(files: SketchFileData[], oldMain: string | undefined, new
   return out
 }
 
-/** A blank sketch for a newly added board. */
-export const blankFiles = (prefix: string): SketchFileData[] => [
+/** A blank sketch for a newly added board (a Linux board gets a Python program). */
+export const blankFiles = (prefix: string, linux = false): SketchFileData[] => linux ? [
+  { name: `${prefix}main.py`, content: "# Runs on the Raspberry Pi (Linux, Python 3). gpiozero drives the GPIO pins.\nfrom gpiozero import LED\nfrom time import sleep\n\nprint(\"Hello, world from the Raspberry Pi!\")\nled = LED(17)\nwhile True:\n    led.toggle()\n    print(\"LED on\" if led.is_lit else \"LED off\")\n    sleep(0.5)\n" },
+  { name: `${prefix}requirements.txt`, content: "# Python packages (install them from the Terminal: pip install …)\n" },
+] : [
   { name: `${prefix}sketch.ino`, content: "void setup() {\n  // put your setup code here, to run once:\n  Serial.begin(9600);\n}\n\nvoid loop() {\n  // put your main code here, to run repeatedly:\n}\n" },
   { name: `${prefix}libraries.txt`, content: "" },
 ]
