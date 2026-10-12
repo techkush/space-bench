@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
+import { ModuleControls } from "@/components/ModuleControls"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { displayRef, isLabel, placedPins, symbolFor, type Doc as CircuitDoc, type Part } from "@/editor/model"
@@ -320,6 +321,7 @@ function PartInspector({ doc, part, values, netlist, taken, onChangePart, onRota
                 <Slider value={[Number(params.pos ?? 0.5)]} min={0} max={1} step={0.01} onValueChange={([v]) => setParams({ pos: v.toFixed(2) })} />
               </div>
             )}
+            {resolved?.kind === "MODULE" && <ModuleControls part={part} params={params} setParams={setParams} />}
             {resolved?.kind === "SWITCH" && (
               <label className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm">
                 Closed <Switch checked={/^(1|true|on|closed)$/i.test(params.closed ?? "0")} onCheckedChange={(c) => setParams({ closed: c ? "1" : "0" })} />

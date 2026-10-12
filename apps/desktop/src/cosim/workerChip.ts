@@ -1,9 +1,9 @@
 // A ChipLink to a chip running in its own Web Worker (chip.worker.ts).
 import type { BoardDef } from "@/mcu/boards"
-import type { ChipLink, FrameOut } from "./chip"
+import type { ChipLink, ChipModules, FrameOut } from "./chip"
 import type { FromChip, ToChip } from "./chip.worker"
 
-export function workerChip(board: BoardDef, firmware: string | Uint8Array): Promise<ChipLink> {
+export function workerChip(board: BoardDef, firmware: string | Uint8Array, modules?: ChipModules): Promise<ChipLink> {
   const w = new Worker(new URL("./chip.worker.ts", import.meta.url), { type: "module" })
   const send = (m: ToChip) => w.postMessage(m)
   const pending = new Map<number, { ok: (o: FrameOut) => void; fail: (e: Error) => void }>()
@@ -18,6 +18,7 @@ export function workerChip(board: BoardDef, firmware: string | Uint8Array): Prom
         resolve({
           frame: (frame) => new Promise((ok, fail) => { const id = ++seq; pending.set(id, { ok, fail }); send({ type: "frame", id, frame }) }),
           serialWrite: (text) => send({ type: "serial", text }),
+          ui: (part, u) => send({ type: "ui", part, u }),
           dispose: () => { w.terminate(); for (const p of pending.values()) p.fail(new Error("stopped")); pending.clear() },
         })
       } else if (m.type === "frame") { pending.get(m.id)?.ok(m.out); pending.delete(m.id) }
@@ -27,6 +28,6 @@ export function workerChip(board: BoardDef, firmware: string | Uint8Array): Prom
         pending.get(m.id)?.fail(err); pending.delete(m.id)
       }
     }
-    send({ type: "start", board: board.type, firmware })
+    send({ type: "start", board: board.type, firmware, modules })
   })
 }

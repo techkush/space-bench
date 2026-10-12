@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { ModuleLive } from "@/components/ModuleLive"
+import { moduleOf } from "@/lib/modules"
+import type { ModView } from "@/mcu/catalog/look"
 import { Eye, Map as MapIcon, Maximize2, Minus, Plus } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -40,6 +43,8 @@ interface Props {
   values: Record<string, number>
   /** simulated values are available (otherwise overlays are hidden) */
   live: boolean
+  /** what the Arduino modules show while the circuit and firmware simulate together (by ref) */
+  moduleViews?: Record<string, ModView>
   wireFlow: Map<string, number>
   overlays: Overlays
   setOverlays: (o: Overlays) => void
@@ -102,7 +107,7 @@ function Sparkline({ x, y, color }: { x: number[]; y: number[]; color: string })
 
 export function SchematicEditor(props: Props) {
   const {
-    doc, netlist, values, live, wireFlow, overlays, setOverlays, probeFlags, inputs, series, selection, setSelection, tool, ghostRot, ghostMirror,
+    doc, netlist, values, live, moduleViews, wireFlow, overlays, setOverlays, probeFlags, inputs, series, selection, setSelection, tool, ghostRot, ghostMirror,
     onCommit, onPlace, onWire, onProbe, onRemoveProbe, onNoConnect, onToolDone, onHover, onZoom, fitKey,
   } = props
   const svgRef = useRef<SVGSVGElement>(null)
@@ -415,6 +420,12 @@ export function SchematicEditor(props: Props) {
                     stroke={sel ? "var(--canvas-selection)" : "none"} strokeDasharray="4 3" strokeWidth={1} />
                   <UnitArt unit={u} />
                   {out && <OutputMarks s={out} box={u.box} />}
+                  {(() => {
+                    const m = moduleOf(p.lib)
+                    if (!m || drag || !(live || moduleViews?.[p.ref])) return null
+                    return <ModuleLive m={m} part={p} view={moduleViews?.[p.ref]} values={values}
+                      netOf={(pin) => { const n = Object.entries(m.pinName).find(([, name]) => name === pin)?.[0]; return n ? netlist.pinNet.get(`${p.ref}.${n}`) : undefined }} />
+                  })()}
                 </g>
                 {label ? (
                   <text x={p.x * UNIT_PX + 22} y={p.y * UNIT_PX - 13} className="pointer-events-none font-sans" fill={color} fontSize={11} fontWeight={600}>{p.net}</text>

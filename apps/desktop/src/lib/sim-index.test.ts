@@ -9,6 +9,7 @@ import { expect, it } from "vitest"
 import { defaultPart, type Part } from "@/editor/model"
 import { ensureSymbols, getSymbol, loadIndex, setLoader } from "@/lib/kicad"
 import { resolveSim } from "@/lib/spice"
+import { MODULE_LIB } from "@/lib/modules"
 
 const KICAD = path.resolve(import.meta.dirname, "../../public/kicad")
 const FILE = path.join(KICAD, "sim-index.json.gz")
@@ -30,7 +31,8 @@ export function simulates(id: string): boolean {
 }
 
 it("sim-index.json matches the simulation resolver", async () => {
-  const rows = await loadIndex()
+  // KiCad symbols only: generated libraries (Arduino_Modules) carry their own sim flag
+  const rows = (await loadIndex()).filter((r) => r.lib !== MODULE_LIB)
   const libs = [...new Set(rows.map((r) => r.lib))]
   await ensureSymbols(libs.map((l) => `${l}:${rows.find((r) => r.lib === l)!.name}`))
   const out: Record<string, string[]> = {}

@@ -53,6 +53,8 @@ import { inputKind, isClosed, potPos, setClosed, setPotPos } from "@/editor/inpu
 import { resolveFeeds, sensorSignal } from "@/lib/feeds"
 import { labChannel, openLabWindow } from "@/lib/labLink"
 import { QUANTITIES } from "@/lib/sensors"
+// Arduino modules as schematic parts (Arduino_Modules:…)
+import "@/lib/modules"
 import { isSensor, senseOf } from "@/editor/inputs"
 import type { AgentHost } from "@/lib/ai/agent"
 import { summarizeResult } from "@/lib/ai/summary"
@@ -176,6 +178,8 @@ export default function App() {
   const [analysis, setAnalysis] = useState<AnalysisType>("ac")
   const [result, setResult] = useState<JobResult | null>(null)
   const [opValues, setOpValues] = useState<Record<string, number>>({})
+  /** what the Arduino modules show in a co-simulation (screens, LEDs), by ref */
+  const [moduleViews, setModuleViews] = useState<Record<string, import("@/mcu/catalog/look").ModView>>({})
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [probes, setProbes] = useState<string[]>([])
@@ -278,7 +282,7 @@ export default function App() {
   useEffect(() => { if (boards.length && !hadBoards.current) setFwOpen(true); hadBoards.current = boards.length > 0 }, [boards.length])
   const cosim = useCoSim({
     doc, cliBin: settings.arduinoCliPath,
-    onFrame: (f) => { cosimWindow.current = f.window; setResult(f.window); setOpValues(f.avg); setError(null) },
+    onFrame: (f) => { cosimWindow.current = f.window; setResult(f.window); setOpValues(f.avg); setModuleViews(f.mods); setError(null) },
     onError: (msg) => { setError(msg); toast.error(`Circuit + firmware stopped: ${msg.split("\n")[0]}`) },
   })
 
@@ -1486,7 +1490,7 @@ export default function App() {
                 </button>
               )}
               <SchematicEditor
-                doc={doc} netlist={netlist} values={shownValues} live={!error && Object.keys(shownValues).length > 0}
+                doc={doc} netlist={netlist} values={shownValues} live={!error && Object.keys(shownValues).length > 0} moduleViews={cosim.active ? moduleViews : undefined}
                 wireFlow={wireFlow} overlays={overlays} setOverlays={setOverlays} probeFlags={probeFlags} inputs={inputChips} series={series}
                 onNoConnect={(at) => commit(toggleNoConnect(doc, at))} onHover={setHoverInfo} onZoom={setZoom}
                 selection={selection} setSelection={setSelection}
