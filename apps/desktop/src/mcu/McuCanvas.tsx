@@ -17,6 +17,7 @@ import type { Frame } from "./sim"
 import { paintOled } from "./devices"
 import { catalogPart, defineCatalog, type CatalogPart } from "./catalog"
 import { drawingOf, type ModView } from "./catalog/look"
+import { pinEdge, routeAround, tidy } from "./wire-route"
 
 defineCatalog()
 /** what a catalogue part responds to while running: a click, a press, or its own events */
@@ -527,8 +528,17 @@ export function McuCanvas({ diagram, onChange, frame, running, onUi, selected, o
         const rx = pb.x + (pb.x > pa.x ? -1 : 1) * off
         pts = [pa, { x: pa.x, y: stubY }, { x: rx, y: stubY }, { x: rx, y: ry }, { x: pb.x, y: ry }, pb]
       }
-      if (Math.abs(pa.x - pb.x) < 0.5) pts = [pa, pb]
+    } else if (!hints.length) {
+      const part = (e: string) => diagram.parts.find((x) => x.id === splitEnd(e)[0])
+      const pA = part(a), pB = part(b)
+      if (pA && pB) {
+        const ba = bounds(pA, measure[pA.id]), bb = bounds(pB, measure[pB.id])
+        const ea = pinEdge(pa, ba), eb = pinEdge(pb, bb)
+        const lane = (k: string) => { const n = lanes.get(k) ?? 0; lanes.set(k, n + 1); return n }
+        pts = routeAround(pa, ea, ba, lane(`${pA.id}:${ea}`), pb, eb, bb, lane(`${pB.id}:${eb}`))
+      } else pts = routePoints(pa, pb, hints)
     } else pts = routePoints(pa, pb, hints)
+    pts = tidy(pts)
     return { i, color, d: pts.map((p, k) => `${k ? "L" : "M"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "), a, b }
   })
   }, [diagram.connections, diagram.parts, pinPos, measure])
