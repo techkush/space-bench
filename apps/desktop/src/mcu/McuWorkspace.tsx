@@ -29,6 +29,7 @@ import type { SketchFileData } from "./examples"
 import { McuCanvas, PART_DRAG, type CanvasApi } from "./McuCanvas"
 import { CATEGORIES, PARTS, catalogControls, partInfo, type PartInfo } from "./parts"
 import type { Frame, Snapshot } from "./sim"
+import type { LiveView } from "./SketchEditor"
 import { CheckDialog } from "./CheckDialog"
 import { ESP32_BRIDGE, ESP32_BRIDGE_FILE } from "./esp32/bridge"
 import { espPoll, espSend, espStart, espStop } from "./esp32/host"
@@ -166,6 +167,11 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
     return idle
   }, [builds, statuses, focusId, multi]) // eslint-disable-line react-hooks/exhaustive-deps
   const serial = (focusId && serials[focusId]) || ""
+  /** the focused board's pins, clock and serial for the live code view (while running) */
+  const liveFrame = (focusId && frames[focusId]) || null
+  const liveView = useMemo<LiveView | null>(() => (running && liveFrame?.live
+    ? { pins: liveFrame.live, vcc: liveFrame.vcc ?? board?.vcc ?? 5, seconds: liveFrame.seconds, serial: serial.slice(-4000), led: board?.led ?? "" }
+    : null), [running, liveFrame, serial, board])
   const setSerial = (f: (old: string) => string) => focusId && setSerials((o) => ({ ...o, [focusId]: f(o[focusId] ?? "") }))
   const frame = useMemo(() => mergeFrames(frames, focusId), [frames, focusId])
   // breadboard seating adds connections the canvas finds (pins sitting on holes)
@@ -815,7 +821,7 @@ export function McuWorkspace({ doc: initial, chatKey, where, dark, onToggleTheme
           {active === DIAGRAM && diagramError && <div className="border-b bg-destructive/10 px-3 py-1 text-[11px] text-destructive">{diagramError}</div>}
           <div className="min-h-0 flex-1">
             <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" /> Loading editor…</div>}>
-              <MemoEditor path={active} language={langOf(active)} value={active === DIAGRAM ? diagramDraft ?? textOf(DIAGRAM) : textOf(active)} onChange={(v) => setText(active, v)} dark={dark} diagnostics={diagnostics.filter((d) => d.file === active)} />
+              <MemoEditor path={active} language={langOf(active)} value={active === DIAGRAM ? diagramDraft ?? textOf(DIAGRAM) : textOf(active)} onChange={(v) => setText(active, v)} dark={dark} diagnostics={diagnostics.filter((d) => d.file === active)} live={active === DIAGRAM ? null : liveView} />
             </Suspense>
           </div>
         </div>
@@ -998,7 +1004,7 @@ function PartsPalette({ onAdd, onMore, hasBoard }: { onAdd: (p: PartInfo) => voi
   )
 }
 
-const MemoEditor = memo(function MemoEditor(props: { path: string; language: string; value: string; onChange: (v: string) => void; dark: boolean; diagnostics: Diagnostic[] }) {
+const MemoEditor = memo(function MemoEditor(props: { path: string; language: string; value: string; onChange: (v: string) => void; dark: boolean; diagnostics: Diagnostic[]; live: LiveView | null }) {
   return <SketchEditor {...props} />
 })
 

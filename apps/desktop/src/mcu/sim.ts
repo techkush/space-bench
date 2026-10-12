@@ -49,6 +49,23 @@ export interface Frame {
   boards?: Record<string, { led: number; tx: boolean }>
   /** what catalogue parts show (relay on, pixels, digits, meter text …) */
   mods: Map<string, ModView>
+  /** every signal pin of the board as the sketch sees it (the live code view) */
+  live?: Record<string, LivePin>
+  /** the board's supply voltage (ADC full scale) */
+  vcc?: number
+}
+/** One board pin right now: how the sketch set it up and what is on it. */
+export interface LivePin {
+  /** "out" = driven by the sketch, else an input (with its pull) */
+  mode: "out" | "in" | "pullup" | "pulldown"
+  /** volts on the pin: the solved circuit's for a wired pin, else what the sketch drives */
+  v: number
+  /** 0 = low, 1 = high, 2 = floating */
+  level: 0 | 1 | 2
+  /** share of the last frame the pin was high (PWM) */
+  duty: number
+  /** level changes in the last frame */
+  toggles: number
 }
 export interface Snapshot { pins: [string, PinLevel][]; drives: [string, Drive][]; ui: Record<string, PartUi> }
 
@@ -534,7 +551,25 @@ export class McuSim {
       i2cMissing: [...this.bus.missing].filter((a) => !this.bus.devices.has(a)),
       snapshot: { pins: [...this.pinLevels()], drives: [...this.drives], ui: this.ui },
       logic: this.logic.splice(0), logicPins: this.wiredPins, mods,
+      live: this.livePins(window), vcc: this.board.vcc,
     }
+  }
+
+  private livePins(window: Map<string, { duty: number; toggles: number }>): Record<string, LivePin> {
+    const live: Record<string, LivePin> = {}
+    const vcc = this.board.vcc
+    for (const pin of Object.keys(this.board.pins)) {
+      const t = this.machine.track.get(pin)
+      if (!t) continue
+      const w = window.get(pin)
+      const mode = t.out !== null ? "out" : t.pullup ? "pullup" : t.pulldown ? "pulldown" : "in"
+      const wired = this.wiredSet.has(pin)
+      const duty = w ? w.duty : t.out ? 1 : 0
+      const v = wired ? this.voltsAt(this.boardId, pin) ?? 0 : t.out !== null ? (w && w.toggles > 1 ? duty * vcc : t.out ? vcc : 0) : t.pullup ? vcc : 0
+      const floating = !wired && t.out === null && !t.pullup && !t.pulldown
+      live[pin] = { mode, v, level: floating ? 2 : v > vcc / 2 ? 1 : 0, duty, toggles: w?.toggles ?? 0 }
+    }
+    return live
   }
 
   /** Voltage of the net a part's pin is on. */
