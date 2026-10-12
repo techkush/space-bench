@@ -63,6 +63,20 @@ pub fn install_core(core: &str, url: Option<&str>, custom: Option<&str>) -> Resu
   if ok { Ok(out) } else { Err(if err.trim().is_empty() { out } else { err }) }
 }
 
+/// The Arduino library index, searched (`arduino-cli lib search … --format json`): raw JSON.
+pub fn lib_search(query: &str, custom: Option<&str>) -> Result<String, String> {
+  let bin = find(custom).ok_or_else(not_found)?;
+  let (ok, out, err) = run(&bin, &["lib", "search", query, "--format", "json"])?;
+  if ok { Ok(out) } else { Err(if err.trim().is_empty() { out } else { err }) }
+}
+
+/// Installed libraries (`arduino-cli lib list --format json`): raw JSON.
+pub fn lib_list(custom: Option<&str>) -> Result<String, String> {
+  let bin = find(custom).ok_or_else(not_found)?;
+  let (ok, out, err) = run(&bin, &["lib", "list", "--format", "json"])?;
+  if ok { Ok(out) } else { Err(if err.trim().is_empty() { out } else { err }) }
+}
+
 /// Install libraries named in libraries.txt (`Name` or `Name@version`), skipping installed ones.
 pub fn install_libraries(names: &[String], custom: Option<&str>) -> Result<String, String> {
   let bin = find(custom).ok_or_else(not_found)?;

@@ -40,7 +40,7 @@ import { NewProjectDialog, type NewProjectRequest } from "@/components/NewProjec
 import { ProjectPanel } from "@/components/ProjectPanel"
 import { refreshVariants } from "@/kirk/components"
 import { copyIntoProject } from "@/lib/libraries"
-import { createProject, loadCircuit, newCircuit, newLibraryFile, openProject, projectResolver, projectTree, saveCircuit, type Project, type TreeNode } from "@/lib/project"
+import { createProject, loadCircuit, newCircuit, newLibraryFile, openProject, projectResolver, projectTree, saveCircuit, type Project, type TreeNode, boardSketchLink, projectArduinoLibraries } from "@/lib/project"
 import { appFS, dirName, homeFolders, join as joinPath } from "@/lib/projectfs"
 import { MCU_EXAMPLES, blankSketch } from "@/mcu/examples"
 import { loadSketch, newSketch, saveSketch, sketchFolderOf } from "@/mcu/sketchfs"
@@ -63,6 +63,7 @@ import { FirmwarePanel } from "@/components/FirmwarePanel"
 import { boardParts, isProgrammable } from "@/cosim/boards"
 import { firmwareOf, useCoSim } from "@/cosim/useCoSim"
 import { usePermission } from "@/components/PermissionDialog"
+import { SketchView } from "@/components/SketchView"
 import { checkSetup, installSetup } from "@/mcu/setup"
 import { buildNetlist, resolveSim, setSolverOptions } from "@/lib/spice"
 import { explainFailure, refsInMessage, stamp, startRun, type RunHandle, type SpanStatus } from "@/lib/runlog"
@@ -211,6 +212,8 @@ export default function App() {
   const [runOpen, setRunOpen] = useState(false)
   const [runView, setRunView] = useState<string | null>(null)
   const [pcbOpen, setPcbOpen] = useState(false)
+  /** the Sketch tab (Sketch | Schematic | PCB): the boards' firmware and Arduino libraries */
+  const [sketchOpen, setSketchOpen] = useState(false)
   // right panel: part inspector or "Instruments & data"
   const [aside, setAside] = useState<"inspector" | "instruments">("inspector")
   /** the panel shows for a selected part, or when Instruments & data was opened */
@@ -300,6 +303,22 @@ export default function App() {
   useEffect(() => { if (folders) import("@/mcu/customParts").then((m) => m.loadImportedParts(appFS(), joinPath(dirName(folders.projects), "Parts"))).catch(() => {}) }, [folders])
   const [tree, setTree] = useState<TreeNode[]>([])
   const refreshTree = useCallback(() => { if (project) projectTree(project).then(setTree).catch(() => setTree([])) }, [project])
+  // the project's Arduino libraries: every sketch's libraries.txt on disk, plus the open circuit's boards (unsaved too)
+  const [diskLibs, setDiskLibs] = useState<{ name: string; users: string[] }[]>([])
+  useEffect(() => { if (project) projectArduinoLibraries(project).then(setDiskLibs).catch(() => setDiskLibs([])); else setDiskLibs([]) }, [project, tree])
+  /** every Arduino library the project uses: its sketch folders on disk, merged with this circuit's boards as they are now */
+  const projectLibs = useMemo(() => {
+    const out = new Map<string, Set<string>>()
+    for (const l of diskLibs) out.set(l.name, new Set(l.users))
+    const prefix = circuitFile ? circuitFile.replace(/^.*\//, "").replace(/\.kirk$/, "") : "circuit"
+    for (const b of boards) for (const line of (doc.firmware?.[b.ref]?.libraries ?? "").split(/\r?\n/)) {
+      const name = line.replace(/#.*/, "").trim().split("@")[0].trim()
+      if (!name) continue
+      if (!out.has(name)) out.set(name, new Set())
+      out.get(name)!.add(`${prefix}-${b.ref.toLowerCase()}`)
+    }
+    return [...out].map(([name, users]) => ({ name, users: [...users].sort() })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [diskLibs, boards, doc.firmware, circuitFile])
   useEffect(refreshTree, [refreshTree])
   const resolve = useMemo(() => projectResolver(project, folders ? { fs: appFS(), root: folders.libraries } : null), [project, folders])
   const resolveRef = useRef(resolve)
@@ -373,11 +392,11 @@ export default function App() {
   const showRefs = (refs: string[]) => {
     const ids = latestDoc.current.parts.filter((p) => refs.includes(p.ref)).map((p) => p.id)
     setSelection({ parts: new Set(ids), wires: new Set() })
-    setRunOpen(false); setAnalysisOpen(false); setPcbOpen(false); setView((v) => (v === "code" ? "split" : v)); setScreen("work")
+    setRunOpen(false); setAnalysisOpen(false); setPcbOpen(false); setSketchOpen(false); setView((v) => (v === "code" ? "split" : v)); setScreen("work")
   }
   const showRefsRef = useRef(showRefs)
   showRefsRef.current = showRefs
-  const openRun = (id: string) => { setRunView(id); setRunOpen(true); setAnalysisOpen(false); setPcbOpen(false); setScreen("work") }
+  const openRun = (id: string) => { setRunView(id); setRunOpen(true); setAnalysisOpen(false); setPcbOpen(false); setSketchOpen(false); setScreen("work") }
   const openRunRef = useRef(openRun)
   openRunRef.current = openRun
 
@@ -873,7 +892,7 @@ export default function App() {
   }
   askAiRef.current = (text: string) => { openAi(); setAiAsk({ id: Date.now(), text }) }
   // the chat sits beside the editor: make the code pane wide enough for both
-  const openAi = () => { setPcbOpen(false); setAnalysisOpen(false); setRunOpen(false); if (view === "schematic") { regenerate(); setView("split") } setCodeW((w) => Math.max(w, Math.min(940, window.innerWidth - 560))); setAiOpen(true) }
+  const openAi = () => { setPcbOpen(false); setSketchOpen(false); setAnalysisOpen(false); setRunOpen(false); if (view === "schematic") { regenerate(); setView("split") } setCodeW((w) => Math.max(w, Math.min(940, window.innerWidth - 560))); setAiOpen(true) }
 
   const applySetup = (pt: SetupPatch) => {
     const next = { ...doc, ...pt }
@@ -1065,6 +1084,17 @@ export default function App() {
   const openProjectFile = async (file: string) => {
     if (!project) return
     const sketch = sketchFolderOf(file)
+    // a board's sketch of a circuit: open the circuit on its Sketch tab
+    const link = sketch ? await boardSketchLink(project, sketch) : null
+    if (link) {
+      if (link.circuit !== circuitFile) {
+        if (!(await confirmDiscard())) return
+        try { await openCircuit(project, link.circuit) } catch (e) { toast.error(String(e instanceof Error ? e.message : e)); return }
+      }
+      setScreen("work"); setFwActive(link.ref)
+      setAnalysisOpen(false); setRunOpen(false); setPcbOpen(false); setSketchOpen(true)
+      return
+    }
     if (sketch) {
       try { openSketch(await loadSketch(project, sketch), sketch, "work") } catch (e) { toast.error(String(e instanceof Error ? e.message : e)) }
       return
@@ -1485,10 +1515,11 @@ export default function App() {
       <div className={screen === "work" ? "flex h-full flex-col" : "hidden"}>
         <TitleBar title={doc.title} dirty={doc !== savedDoc} dark={dark} onToggleTheme={toggleTheme} onNew={onNew} onOpen={onOpen} onSave={onSave} onSearch={() => setBrowser({ open: true })} onExamples={() => setExamplesOpen(true)}
           onImport={onImport} onHome={goHome} onSettings={() => openSettings()}
-          view={view} setView={(v) => { setAnalysisOpen(false); setRunOpen(false); setPcbOpen(false); if (v !== "schematic" && view === "schematic") regenerate(); setView(v) }}
-          analysisOpen={analysisOpen} onAnalysis={() => { setRunOpen(false); setPcbOpen(false); setAnalysisOpen((o) => !o) }}
-          runOpen={runOpen} onRuns={() => { setAnalysisOpen(false); setPcbOpen(false); setRunOpen((o) => !o) }} running={running}
-          pcbOpen={pcbOpen} onPcb={() => { setAnalysisOpen(false); setRunOpen(false); setPcbOpen((o) => !o) }}
+          view={view} setView={(v) => { setAnalysisOpen(false); setRunOpen(false); setPcbOpen(false); setSketchOpen(false); if (v !== "schematic" && view === "schematic") regenerate(); setView(v) }}
+          analysisOpen={analysisOpen} onAnalysis={() => { setRunOpen(false); setPcbOpen(false); setSketchOpen(false); setAnalysisOpen((o) => !o) }}
+          runOpen={runOpen} onRuns={() => { setAnalysisOpen(false); setPcbOpen(false); setSketchOpen(false); setRunOpen((o) => !o) }} running={running}
+          pcbOpen={pcbOpen} onPcb={() => { setAnalysisOpen(false); setRunOpen(false); setSketchOpen(false); setPcbOpen((o) => !o) }}
+          sketchOpen={sketchOpen} onSketch={() => { setAnalysisOpen(false); setRunOpen(false); setPcbOpen(false); setSketchOpen((o) => !o) }}
           aiOpen={aiOpen && view !== "schematic" && !pcbOpen && !runOpen && !analysisOpen} onAi={() => (aiOpen && view !== "schematic" && !pcbOpen && !runOpen && !analysisOpen ? setAiOpen(false) : openAi())}
           onLab={() => inputChips.openLab()} labBlocked={labBlocked} />
         <Toolbar
@@ -1528,13 +1559,21 @@ export default function App() {
               onPause={pauseRun} onStop={() => { stopRun() }} /></ErrorBoundary>
           </div>
         )}
+        {sketchOpen && (
+          <div className="flex min-h-0 flex-1">
+            <ErrorBoundary name="sketch"><SketchView doc={doc} boards={boards} active={fwActive} setActive={setFwActive}
+              onChange={(ref, fw) => history.replace((d) => ({ ...d, firmware: { ...d.firmware, [ref]: fw } }))}
+              cosim={cosim} dark={dark} cliPath={settings.arduinoCliPath} onAskAi={(t) => askAiRef.current(t)}
+              onBack={() => setSketchOpen(false)} onAddBoard={(lib) => { setSketchOpen(false); void startPlace(lib) }} /></ErrorBoundary>
+          </div>
+        )}
         {pcbOpen && (
           <div className="min-h-0 flex-1">
             <ErrorBoundary name="PCB editor"><PcbView doc={doc} netlist={netlist} onChange={(pcb) => commit({ ...doc, pcb })}
               onFootprint={(id, footprint) => commit(updatePart(doc, id, { footprint }))} /></ErrorBoundary>
           </div>
         )}
-        <div className={analysisOpen || runOpen || pcbOpen ? "hidden" : "flex min-h-0 flex-1"}>
+        <div className={analysisOpen || runOpen || pcbOpen || sketchOpen ? "hidden" : "flex min-h-0 flex-1"}>
           {view !== "schematic" && (
             <div className={view === "code" ? "min-w-0 flex-1" : "shrink-0"} style={view === "split" ? { width: clamp(codeW, 320, window.innerWidth - 480) } : undefined}>
               <CodePanel view={view} setView={setView} fileName={`${doc.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "circuit"}.kirk`} dirty={doc !== savedDoc}
@@ -1556,7 +1595,14 @@ export default function App() {
               </div>
               <div className="min-h-0 flex-1 [&>*]:h-full [&>*]:w-full [&>*]:border-r-0">
                 {leftTab === "project"
-                  ? <ProjectPanel project={project} tree={tree} active={circuitFile} dirty={doc !== savedDoc} onOpen={openProjectFile} onNewCircuit={newProjectCircuit} onNewLibrary={newProjectLibrary} onNewSketch={newProjectSketch} onRefresh={refreshTree} onReveal={revealInFinder} onClose={closeProject} />
+                  ? <ProjectPanel project={project} tree={tree} active={circuitFile} dirty={doc !== savedDoc} onOpen={openProjectFile} onNewCircuit={newProjectCircuit} onNewLibrary={newProjectLibrary} onNewSketch={newProjectSketch} onRefresh={refreshTree} onReveal={revealInFinder} onClose={closeProject}
+                      arduinoLibs={projectLibs} onArduinoLib={(_name, users) => {
+                        // a board of this circuit that uses it: the Sketch tab on that board; else the first sketch folder
+                        const prefix = circuitFile ? `${circuitFile.replace(/^.*\//, "").replace(/\.kirk$/, "")}-` : null
+                        const mine = prefix ? users.find((u) => u.startsWith(prefix)) : undefined
+                        if (mine) { setFwActive(boards.find((b) => b.ref.toLowerCase() === mine.slice(prefix!.length))?.ref ?? null); setAnalysisOpen(false); setRunOpen(false); setPcbOpen(false); setSketchOpen(true) }
+                        else if (users[0]) void openProjectFile(`firmware/${users[0]}/libraries.txt`)
+                      }} />
                   : <PartsSidebar onPlace={(id) => startPlace(id)} onBrowse={(q) => setBrowser({ open: true, q })} placing={placing?.lib ?? null} recent={recent} showAll={showAllParts} onShowAll={setShowAllParts} inProject={inProject} />}
               </div>
             </div>

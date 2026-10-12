@@ -7,6 +7,7 @@
 //     lib/*.kirk                component libraries of this project
 //     pcb/main.board.json       board layout of circuits/main.kirk
 //     firmware/<name>/          a microcontroller sketch: sketch.ino, diagram.json (wiring, Wokwi format), libraries.txt
+//     firmware/<circuit>-<ref>/ the sketch of board <ref> in circuits/<circuit>.kirk: sketch.ino …, libraries.txt, board.json
 //     models/                   SPICE model files
 //     results/                  exported runs (Lab, Analysis)
 //     .spacebench/main.json     cache: the exact document, for fast lossless opening
@@ -37,7 +38,7 @@ A Space Bench project.
 | Folder | What's in it |
 |---|---|
 | \`circuits/\` | circuits as Kirk code (\`.kirk\`): parts, connections, schematic layout, feeds |
-| \`firmware/\` | microcontroller sketches, one folder each: \`sketch.ino\`, \`diagram.json\` (wiring, Wokwi format), \`libraries.txt\` |
+| \`firmware/\` | microcontroller sketches, one folder each: \`sketch.ino\`, \`diagram.json\` (wiring, Wokwi format), \`libraries.txt\`; a circuit's boards have theirs in \`<circuit>-<board>/\` (with \`board.json\`) |
 | \`lib/\` | this project's component libraries (\`component …\` definitions) |
 | \`pcb/\` | board layouts, one per circuit |
 | \`models/\` | SPICE model files (\`.lib\`, \`.mod\`) |
@@ -121,6 +122,70 @@ export function projectResolver(p: Project | null, libraries: { fs: ProjectFS; r
 
 const cachePath = (p: Project, circuit: string) => join(p.root, ".spacebench", `${stem(circuit)}.json`)
 const pcbPath = (p: Project, circuit: string) => join(p.root, "pcb", `${stem(circuit)}.board.json`)
+/** where the sketch of board `ref` in a circuit lives: firmware/<circuit>-<ref>/ */
+export const boardSketchFolder = (circuit: string, ref: string) => `firmware/${stem(circuit)}-${ref.toLowerCase()}`
+/** what a firmware/<…>/board.json says: the circuit and the board the sketch belongs to */
+export interface BoardSketchLink { circuit: string; ref: string; lib: string }
+const SKETCH_FILE = /\.(ino|h|hpp|c|cpp|py)$/
+
+/** The boards' sketches of a circuit, from their folders (they win over the cache: they're the files). */
+async function readBoardSketches(p: Project, circuit: string, doc: Doc): Promise<Doc> {
+  let firmware = doc.firmware
+  for (const part of doc.parts) {
+    const dir = join(p.root, boardSketchFolder(circuit, part.ref))
+    if (!(await p.fs.exists(dir))) continue
+    const entries = (await p.fs.list(dir)).filter((e) => !e.dir)
+    const files: { name: string; content: string }[] = []
+    for (const e of entries) if (SKETCH_FILE.test(e.name)) files.push({ name: e.name, content: await p.fs.read(e.path) })
+    if (!files.length) continue
+    // the main program first
+    files.sort((a, b) => (/^(sketch\.ino|main\.py)$/.test(a.name) ? -1 : /^(sketch\.ino|main\.py)$/.test(b.name) ? 1 : a.name.localeCompare(b.name)))
+    const libs = entries.find((e) => e.name === "libraries.txt")
+    firmware = { ...firmware, [part.ref]: { files, ...(libs ? { libraries: await p.fs.read(libs.path) } : {}) } }
+  }
+  return firmware === doc.firmware ? doc : { ...doc, firmware }
+}
+
+/** Write each board's sketch to its folder (files, libraries.txt, board.json); files no longer in it go. */
+async function writeBoardSketches(p: Project, circuit: string, doc: Doc): Promise<void> {
+  for (const [ref, fw] of Object.entries(doc.firmware ?? {})) {
+    const part = doc.parts.find((x) => x.ref === ref)
+    if (!part) continue
+    const dir = join(p.root, boardSketchFolder(circuit, ref))
+    await p.fs.mkdir(dir)
+    const keep = new Set(fw.files.map((f) => f.name))
+    for (const e of await p.fs.list(dir)) if (!e.dir && SKETCH_FILE.test(e.name) && !keep.has(e.name)) await p.fs.remove(e.path)
+    for (const f of fw.files) await p.fs.write(join(dir, f.name), f.content)
+    if (fw.libraries !== undefined) await p.fs.write(join(dir, "libraries.txt"), fw.libraries)
+    const link: BoardSketchLink = { circuit, ref, lib: part.lib }
+    await p.fs.write(join(dir, "board.json"), JSON.stringify(link, null, 2) + "\n")
+  }
+}
+
+/** The circuit and board a firmware/ folder belongs to, if it is a board's sketch. */
+export async function boardSketchLink(p: Project, folder: string): Promise<BoardSketchLink | null> {
+  try { return JSON.parse(await p.fs.read(join(p.root, folder, "board.json"))) as BoardSketchLink } catch { return null }
+}
+
+/** Every Arduino library the project's sketches list (libraries.txt of each firmware/ folder), and who uses it. */
+export async function projectArduinoLibraries(p: Project): Promise<{ name: string; users: string[] }[]> {
+  const out = new Map<string, Set<string>>()
+  const fw = join(p.root, "firmware")
+  if (!(await p.fs.exists(fw))) return []
+  for (const d of await p.fs.list(fw)) {
+    if (!d.dir) continue
+    const f = join(d.path, "libraries.txt")
+    if (!(await p.fs.exists(f))) continue
+    for (const line of (await p.fs.read(f)).split(/\r?\n/)) {
+      const name = line.replace(/#.*/, "").trim()
+      if (!name) continue
+      const key = name.split("@")[0].trim()
+      if (!out.has(key)) out.set(key, new Set())
+      out.get(key)!.add(d.name)
+    }
+  }
+  return [...out].map(([name, users]) => ({ name, users: [...users].sort() })).sort((a, b) => a.name.localeCompare(b.name))
+}
 
 /** Open a circuit of the project: the cached document when the code hasn't changed, else compile it. */
 export async function loadCircuit(p: Project, circuit: string, resolve: CompileOptions["resolve"]): Promise<{ doc: Doc; text: string; diagnostics: { severity: string; message: string }[] }> {
@@ -138,6 +203,7 @@ export async function loadCircuit(p: Project, circuit: string, resolve: CompileO
     doc = r.doc
   }
   try { doc = { ...doc, pcb: JSON.parse(await p.fs.read(pcbPath(p, circuit))) } } catch { /* no board yet */ }
+  doc = await readBoardSketches(p, circuit, doc)
   return { doc, text, diagnostics }
 }
 
@@ -146,6 +212,7 @@ export async function saveCircuit(p: Project, circuit: string, doc: Doc, code?: 
   const text = code ?? generateKirk(doc, deriveNetlist(doc))
   await p.fs.write(join(p.root, circuit), text)
   if (doc.pcb) await p.fs.write(pcbPath(p, circuit), JSON.stringify(doc.pcb))
+  await writeBoardSketches(p, circuit, doc)
   const { pcb: _pcb, ...rest } = doc
   await p.fs.write(cachePath(p, circuit), JSON.stringify({ hash: hash(text), doc: rest }))
   await saveManifest(p)

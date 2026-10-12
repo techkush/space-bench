@@ -25,6 +25,14 @@ export function arduinoDev(): Plugin {
         const bin = findCli()
         const send = (code: number, body: unknown) => { res.statusCode = code; res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)) }
         if (!bin) { send(404, { error: "arduino-cli was not found. Install it (macOS: brew install arduino-cli)." }); return }
+        // the library index (search) and the installed libraries
+        if (req.method === "GET" && req.url?.startsWith("/libs")) {
+          const q = new URL(req.url, "http://x").searchParams.get("q")
+          void run(bin, q !== null ? ["lib", "search", q, "--format", "json"] : ["lib", "list", "--format", "json"]).then((r) => {
+            res.statusCode = r.ok ? 200 : 500; res.setHeader("content-type", "application/json"); res.end(r.ok ? r.stdout || "{}" : JSON.stringify({ error: r.stderr || r.stdout }))
+          })
+          return
+        }
         if (req.method === "GET") {
           const version = execFileSync(bin, ["version"], { encoding: "utf8" }).trim()
           const cores = execFileSync(bin, ["core", "list"], { encoding: "utf8" }).split("\n").slice(1).map((l) => l.split(/\s+/)[0]).filter(Boolean)

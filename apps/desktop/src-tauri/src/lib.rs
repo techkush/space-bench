@@ -91,6 +91,15 @@ async fn arduino_status(bin: Option<String>) -> Result<serde_json::Value, String
 }
 
 #[tauri::command]
+async fn arduino_lib_search(query: String, bin: Option<String>) -> Result<String, String> {
+  tauri::async_runtime::spawn_blocking(move || arduino::lib_search(&query, bin.as_deref())).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn arduino_lib_list(bin: Option<String>) -> Result<String, String> {
+  tauri::async_runtime::spawn_blocking(move || arduino::lib_list(bin.as_deref())).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn arduino_install_core(core: String, url: Option<String>, bin: Option<String>) -> Result<String, String> {
   tauri::async_runtime::spawn_blocking(move || arduino::install_core(&core, url.as_deref(), bin.as_deref())).await.map_err(|e| e.to_string())?
 }
@@ -172,7 +181,7 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![simulate, ngspice_run, ngspice_halt, ngspice_alter, ngspice_lib_path, ngspice_version, ngspice_path, claude_code_run, claude_code_cancel, claude_code_version, arduino_compile, arduino_status, arduino_install_core, esp32_status, esp32_install, esp32_start, esp32_poll, esp32_send, esp32_stop, esp32_qmp, linux_status, linux_fetch, linux_disk, linux_save, linux_start, linux_poll, linux_send, linux_qmp, linux_stop, brew_install, renode_status, renode_install, renode_start, renode_cmd, renode_stage, renode_stop])
+    .invoke_handler(tauri::generate_handler![simulate, ngspice_run, ngspice_halt, ngspice_alter, ngspice_lib_path, ngspice_version, ngspice_path, claude_code_run, claude_code_cancel, claude_code_version, arduino_compile, arduino_status, arduino_install_core, arduino_lib_search, arduino_lib_list, esp32_status, esp32_install, esp32_start, esp32_poll, esp32_send, esp32_stop, esp32_qmp, linux_status, linux_fetch, linux_disk, linux_save, linux_start, linux_poll, linux_send, linux_qmp, linux_stop, brew_install, renode_status, renode_install, renode_start, renode_cmd, renode_stage, renode_stop])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")
     // the emulators are separate processes: stop them with the app (a VM left running keeps its disk locked)

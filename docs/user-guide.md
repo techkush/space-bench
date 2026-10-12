@@ -289,6 +289,17 @@ with tests that compile real sketches against the real libraries.
 Limits: modules talk to each other only on the same board. ESP32 boards have no Wi-Fi (QEMU has no radio).
 I²S audio isn't simulated.
 
+### Sketch | Schematic | PCB: one project
+A circuit with a board that runs a sketch is one design in three views — the tabs at the top:
+- **Sketch** — the boards' firmware full size: files, compile, run with the circuit, Serial; and the board's
+  **Arduino libraries** beside it: what `libraries.txt` lists (installed or not), and the Library Manager
+  index to search and add more. Listed libraries install with arduino-cli on the next compile.
+- **Schematic** / **Kirk** — the circuit; **PCB** — its board layout.
+In a project, each board's sketch is real files: `firmware/<circuit>-<board>/` holds `sketch.ino` (and any
+`.h` / `.cpp`), `libraries.txt` and `board.json` (which circuit and board it belongs to). They are what opens —
+edit them anywhere. Opening that folder in the project tree opens the circuit on its Sketch tab, and the
+project tree lists every **Arduino library** the project's sketches use.
+
 ### Arduino modules in schematics
 The same modules are schematic parts too: the **Arduino_Modules** library (search "light sensor",
 "MAX31856", "OLED" …; 287 modules). Each has a KiCad-style symbol — supplies on top, ground below, the

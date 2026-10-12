@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils"
 import {
   Activity, ChartSpline, ChevronRight, Download, House, Settings, CircleAlert, CircleCheck, CircuitBoard, Copy, Crosshair, FilePlus2, FlipHorizontal2, FolderOpen, Loader2, Moon,
   FileCode2, Hand, Sparkles, MousePointer2, Pause, Settings2, Play, Plus, Redo2, RotateCw, Save, Search, Spline, Square, Sun, Tag, Trash2, TriangleAlert, Undo2, X, Zap,
-  FlaskConical,
+  FlaskConical, Cpu,
 } from "lucide-react"
 import { formatSI } from "@/lib/units"
 
@@ -51,6 +51,9 @@ interface TitleBarProps {
   running: boolean
   pcbOpen: boolean
   onPcb: () => void
+  /** the Sketch tab: the boards' firmware and libraries */
+  sketchOpen: boolean
+  onSketch: () => void
   aiOpen: boolean
   onAi: () => void
   /** open the Lab window; `labBlocked` says why it can't open (errors in the circuit) */
@@ -58,7 +61,7 @@ interface TitleBarProps {
   labBlocked: string | null
 }
 
-export function TitleBar({ title, dirty, dark, onToggleTheme, onNew, onOpen, onSave, onSearch, onExamples, onImport, onHome, onSettings, view, setView, analysisOpen, onAnalysis, runOpen, onRuns, running, pcbOpen, onPcb, aiOpen, onAi, onLab, labBlocked }: TitleBarProps) {
+export function TitleBar({ title, dirty, dark, onToggleTheme, onNew, onOpen, onSave, onSearch, onExamples, onImport, onHome, onSettings, view, setView, analysisOpen, onAnalysis, runOpen, onRuns, running, pcbOpen, onPcb, sketchOpen, onSketch, aiOpen, onAi, onLab, labBlocked }: TitleBarProps) {
   return (
     <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-3 overflow-hidden whitespace-nowrap border-b bg-sidebar pl-[88px] pr-3">
       {/* one line, always: the circuit title shortens with … before anything wraps */}
@@ -94,8 +97,9 @@ export function TitleBar({ title, dirty, dark, onToggleTheme, onNew, onOpen, onS
       </div>
       <div data-tauri-drag-region className="flex-1" />
       <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-muted p-[3px]">
-        <Button size="sm" variant={!analysisOpen && !runOpen && !pcbOpen && view === "schematic" ? "secondary" : "ghost"} className={`h-7 ${!analysisOpen && !runOpen && !pcbOpen && view === "schematic" ? "bg-background shadow-sm" : "text-muted-foreground"}`} onClick={() => setView("schematic")}><Spline /> Schematic</Button>
-        <Tip label="Kirk code ⇄ schematic" keys={`${MOD}E`}><Button size="sm" variant={!analysisOpen && !runOpen && !pcbOpen && view !== "schematic" ? "secondary" : "ghost"} className={`h-7 ${!analysisOpen && !runOpen && !pcbOpen && view !== "schematic" ? "bg-background shadow-sm" : "text-muted-foreground"}`} onClick={() => setView(view === "schematic" || analysisOpen ? (view === "schematic" ? "split" : view) : "schematic")}><FileCode2 /> Kirk</Button></Tip>
+        <Tip label="The boards' sketches and Arduino libraries"><Button size="sm" variant={sketchOpen ? "secondary" : "ghost"} className={`h-7 ${sketchOpen ? "bg-background shadow-sm" : "text-muted-foreground"}`} onClick={onSketch}><Cpu /> Sketch</Button></Tip>
+        <Button size="sm" variant={!analysisOpen && !runOpen && !pcbOpen && !sketchOpen && view === "schematic" ? "secondary" : "ghost"} className={`h-7 ${!analysisOpen && !runOpen && !pcbOpen && !sketchOpen && view === "schematic" ? "bg-background shadow-sm" : "text-muted-foreground"}`} onClick={() => setView("schematic")}><Spline /> Schematic</Button>
+        <Tip label="Kirk code ⇄ schematic" keys={`${MOD}E`}><Button size="sm" variant={!analysisOpen && !runOpen && !pcbOpen && !sketchOpen && view !== "schematic" ? "secondary" : "ghost"} className={`h-7 ${!analysisOpen && !runOpen && !pcbOpen && !sketchOpen && view !== "schematic" ? "bg-background shadow-sm" : "text-muted-foreground"}`} onClick={() => setView(view === "schematic" || analysisOpen ? (view === "schematic" ? "split" : view) : "schematic")}><FileCode2 /> Kirk</Button></Tip>
         <Tip label="Board layout: footprints, routing, DRC, Gerbers"><Button size="sm" variant={pcbOpen ? "secondary" : "ghost"} className={`h-7 ${pcbOpen ? "bg-background shadow-sm" : "text-muted-foreground"}`} onClick={onPcb}><CircuitBoard /> PCB</Button></Tip>
         <Button size="sm" variant={analysisOpen ? "secondary" : "ghost"} className={`h-7 ${analysisOpen ? "bg-background shadow-sm" : "text-muted-foreground"}`} onClick={onAnalysis}><ChartSpline /> Analysis</Button>
         <Tip label="Simulation process: stages, timeline and solver console"><Button size="sm" variant={runOpen ? "secondary" : "ghost"} className={`h-7 ${runOpen ? "bg-background shadow-sm" : "text-muted-foreground"}`} onClick={onRuns}>{running ? <Loader2 className="animate-spin" /> : <Activity />} Runs</Button></Tip>
