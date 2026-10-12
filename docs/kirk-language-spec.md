@@ -701,5 +701,90 @@ The app currently uses the **KiCad symbol libraries** for parts and **ngspice** 
 | `component` with parameters (types, defaults, expressions, text), pins, nested components, `symbol box(…)`, `description` → ngspice `.subckt` per parameter set (§6.2) | done (2026-10-11) | `kirk/components.ts` |
 | `library Name version "x.y.z"`, `import "file.kirk"`, `import library "Name"` | done (2026-10-11) | `kirk/compile.ts`, `lib/project.ts`, `lib/libraries.ts` |
 | `stimulus { }` feeds, `environment { }` (→ room feeds) | done (2026-10-11) | `lib/stimulus.ts`, `lib/feeds.ts` |
-| symbol drawing (§6.5), `behavior` (§6.3), `use … as`, `for` generators, `funcgen`/`bode`/`logger` statements | not yet | — |
+| `for` generators, properties (`R1.MPN = …`), selections (`parts(R*, value:, on:)`), `check` design rules (§18) | done (2026-10-12) | `kirk/select.ts` |
+| KiCad schematics: open `.kicad_sch` (KiCad 6–9) as a circuit + Kirk code; export a circuit as `.kicad_sch` (KiCad 8 format) (§18.5) | done (2026-10-12) | `kicad/schImport.ts`, `kicad/schExport.ts` |
+| symbol drawing (§6.5), `behavior` (§6.3), `use … as`, `funcgen`/`bode`/`logger` statements | not yet | — |
+
+---
+
+## 18. Scripting a design (ideas from kicad-skip)
+
+[kicad-skip](https://github.com/psychogenic/kicad-skip) scripts KiCad files from Python: select symbols by
+reference or value, read and set any property, follow what is connected, clone parts. Kirk has the same
+abilities as language, so they live in the circuit and run on every compile. (Written from scratch — no
+kicad-skip code; kicad-skip is LGPL-2.1.)
+
+### 18.1 `for` — repeat parts and wiring
+
+```kirk
+circuit Ladder {
+    supply VCC = 5 V
+    ground GND
+    for i in 1..8 {
+        R{i} = R(1k)
+        N{i} -- R{i} -- N{i+1}
+    }
+    VCC -- N1
+    N9 -- GND
+}
+```
+
+- `for name in a..b` (whole numbers, both ends included, up or down) or `for name in [1, 2, 5]`; at most 1000 passes.
+- In names, `{…}` takes the loop variables with `+ - *`: `R{i}`, `N{i+1}`, `LED{2*i-1}`, `R{row}{col}` (nested loops). No spaces inside the braces.
+- The loop is unrolled before compiling; a name with a variable no loop defines is **V505**.
+
+### 18.2 Properties — one part
+
+```kirk
+R1.footprint = "Resistor_SMD:R_0603_1608Metric"
+R1.MPN = "RC0603FR-0710KL"
+R1.`Manufacturer PN` = "…"        // names with spaces in backticks
+R1.tol = 1 %                      // tol power voltage → the Tolerance / Power / Voltage fields
+R1.value = 4.7k
+R1.nosim = true                   // leave the part out of the simulation
+```
+
+Any other name is a field (KiCad property) of the part. The code made from the schematic writes footprints
+and fields as these lines, so they survive editing the drawing.
+
+### 18.3 Selections — many parts
+
+```kirk
+parts(R*).footprint = "Resistor_SMD:R_0603_1608Metric"
+parts(C*, value: 100n).MPN = "CL10B104KB8NNNC"
+parts(/U[0-9]+/, lib: "Amplifier_Operational:*").footprint = "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"
+parts(on: VCC)                     // every part with a pin on VCC
+parts(R*, MPN: "")                 // resistors without an MPN
+```
+
+- The first argument is a glob over references (`R*`, `U?`, `C1*`) or a `/regex/`.
+- Filters: `value:` (10k = 10000 = "10K"; text is a glob), `lib:` (symbol, glob), `on:` (a net), `footprint:` (glob; `""` = none), or any field name.
+- A selection that picks nothing is a warning (**V504**).
+
+### 18.4 `check` — design rules
+
+```kirk
+check connected(U1.OUT, R3.1)        // pins (U1.OUT), parts (R1: any of its pins) or nets (VCC)
+check not connected(OUT, VCC)
+check parts(C*).footprint            // every capacitor has a footprint
+check parts(R*, value: 10k).value == 10k
+check parts(R*).count >= 4
+```
+
+Checks run on every compile; a failure is **V510** and says what's wrong (which parts, which nets).
+
+### 18.5 KiCad schematics
+
+- **Import** (File → Import, `.kicad_sch` from KiCad 6–9): symbols, values, footprints, fields, `Sim.*`
+  properties, wires, labels (local, global, hierarchical), power symbols, no-connects and the `.tran` / `.ac` /
+  `.op` directives. A project-local symbol with the same pins as a bundled one (KiCad's rescue libraries) uses
+  the bundled symbol; any other is taken from the file and saved with the circuit (`doc.symbols`). Only the
+  root sheet is read; buses are skipped (labels on bus members still connect). The Kirk code is written from
+  the imported drawing.
+- **Export** (File → Export KiCad schematic…): a KiCad 8 `.kicad_sch` (opens in KiCad 8 and 9) — symbols with
+  their pins and drawing, references, values, footprints, fields, `Sim.*` properties, wires, junctions,
+  labels, no-connects and the analysis as a directive. KiCad's *Tools → Update Symbols from Library* swaps in
+  its own symbol drawings.
+- Tested: every built-in example and ten KiCad demo schematics export and import back with the same
+  connections; every part pin of the demos lands on a wire, a pin or a no-connect.
 

@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils"
 import {
   Activity, ChartSpline, ChevronRight, Download, House, Settings, CircleAlert, CircleCheck, CircuitBoard, Copy, Crosshair, FilePlus2, FlipHorizontal2, FolderOpen, Loader2, Moon,
   FileCode2, Hand, Sparkles, MousePointer2, Pause, Settings2, Play, Plus, Redo2, RotateCw, Save, Search, Spline, Square, Sun, Tag, Trash2, TriangleAlert, Undo2, X, Zap,
-  FlaskConical,
+  FlaskConical, Upload,
 } from "lucide-react"
 import { formatSI } from "@/lib/units"
 
@@ -40,6 +40,8 @@ interface TitleBarProps {
   onSearch: () => void
   onExamples: () => void
   onImport: () => void
+  /** write the circuit as a KiCad schematic */
+  onExportKicad: () => void
   onHome: () => void
   onSettings: () => void
   view: "schematic" | "split" | "code"
@@ -58,7 +60,7 @@ interface TitleBarProps {
   labBlocked: string | null
 }
 
-export function TitleBar({ title, dirty, dark, onToggleTheme, onNew, onOpen, onSave, onSearch, onExamples, onImport, onHome, onSettings, view, setView, analysisOpen, onAnalysis, runOpen, onRuns, running, pcbOpen, onPcb, aiOpen, onAi, onLab, labBlocked }: TitleBarProps) {
+export function TitleBar({ title, dirty, dark, onToggleTheme, onNew, onOpen, onSave, onSearch, onExamples, onImport, onExportKicad, onHome, onSettings, view, setView, analysisOpen, onAnalysis, runOpen, onRuns, running, pcbOpen, onPcb, aiOpen, onAi, onLab, labBlocked }: TitleBarProps) {
   return (
     <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-3 overflow-hidden whitespace-nowrap border-b bg-sidebar pl-[88px] pr-3">
       {/* one line, always: the circuit title shortens with … before anything wraps */}
@@ -81,7 +83,8 @@ export function TitleBar({ title, dirty, dark, onToggleTheme, onNew, onOpen, onS
             <DropdownMenuItem onClick={onOpen}><FolderOpen /> Open… <DropdownMenuShortcut>{MOD}O</DropdownMenuShortcut></DropdownMenuItem>
             <DropdownMenuItem onClick={onSave}><Save /> Save <DropdownMenuShortcut>{MOD}S</DropdownMenuShortcut></DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onImport}><Download /> Import Kirk / netlist… <DropdownMenuShortcut>{MOD}I</DropdownMenuShortcut></DropdownMenuItem>
+            <DropdownMenuItem onClick={onImport}><Download /> Import Kirk / KiCad / netlist… <DropdownMenuShortcut>{MOD}I</DropdownMenuShortcut></DropdownMenuItem>
+            <DropdownMenuItem onClick={onExportKicad}><Upload /> Export KiCad schematic…</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onExamples}><Sparkles /> Examples… <DropdownMenuShortcut>{MOD}⇧E</DropdownMenuShortcut></DropdownMenuItem>
             <DropdownMenuItem onClick={onHome}><House /> Start screen <DropdownMenuShortcut>{MOD}⇧H</DropdownMenuShortcut></DropdownMenuItem>

@@ -118,4 +118,7 @@ export const CHEAT_SHEET: [string, string][] = [
   ["measure f = frequency(V(OUT))", "measurements: max min avg rms pp final frequency period duty rise_time fc gain_db"],
   ["assert f in 60 Hz .. 80 Hz", "a spec check, ✓/✗ after every run"],
   ["sweep R2.value in [1k, 10k]", "multi-run: sweep · montecarlo · temp"],
+  ["for i in 1..8 { R{i} = R(1k) }", "repeat parts and wiring; names take i, i+1, 2*i"],
+  ["parts(R*).footprint = \"…\"", "set a property of a part (R1.MPN = …) or of a selection: parts(R*, value: 10k, on: VCC)"],
+  ["check connected(U1.OUT, R3.1)", "a design rule on every compile: connected · parts(C*).footprint · parts(R*).count == 8"],
 ]

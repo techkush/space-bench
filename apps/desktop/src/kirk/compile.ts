@@ -308,6 +308,10 @@ export async function compileKirk(src: string, prev?: Doc | null, opts: CompileO
   if (errors.length) return { ok: false, diagnostics, ir, doc: null, file }
 
   const doc = buildDoc(ir, file, src, prev ?? null, !!opts.componentMode)
+  // symbols the circuit carries (from a KiCad schematic) stay with it while its parts use them
+  const usedLibs = new Set(doc.parts.map((p) => p.lib))
+  const carried = prev?.symbols?.filter((s) => usedLibs.has(s.id))
+  if (carried?.length) doc.symbols = carried
   // components (with the parameter sets compiled so far), imports and the library header travel with the circuit
   if (defs.size) doc.components = [...defs.values()]
   const imports = file.items.filter((i): i is Extract<Item, { k: "import" }> => i.k === "import").map((i) => ({ path: i.path, library: i.library }))

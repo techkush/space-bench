@@ -73,6 +73,8 @@ import { forgetProject, getProjects, rememberProject, type RecentProject } from 
 import { getSettings, resolvedDark, setSettings, useSettings } from "@/lib/settings"
 import { parseSI } from "@/lib/units"
 import { spiceToKirk } from "@/kirk/fromSpice"
+import { importKicadSch, isKicadSch } from "@/kicad/schImport"
+import { exportKicadSch } from "@/kicad/schExport"
 import { NEW_FROM_CODE } from "@/kirk/snippets"
 import { runAsserts, runMeasures, type AssertOutcome, type MeasureOutcome } from "@/kirk/measure"
 import type { Diagnostic as KirkDiagnostic } from "@/kirk/ast"
@@ -945,9 +947,28 @@ export default function App() {
       const f = await pickImport()
       if (!f) return
       if (/\.kirk$/i.test(f.name)) { if (await openCode(f.text, f.name)) toast.success(`Imported ${f.name}`); return }
+      if (/\.kicad_sch$/i.test(f.name) || isKicadSch(f.text)) {
+        // a KiCad schematic opens as the drawing it is; the Kirk code is written from it
+        const r = await importKicadSch(f.text, f.name)
+        if (!r.doc.parts.length) { toast.error(`${f.name}: no symbols found`); return }
+        if (!(await confirmDiscard())) return
+        await ensureSymbols(docSymbols(r.doc))
+        loadDoc(r.doc, null, f.name)
+        setView(getSettings().kirkView === "code" ? "code" : "split")
+        const n = r.doc.parts.filter((p) => !isVirtual(p)).length
+        toast.success(`Imported ${f.name} · ${n} part${n === 1 ? "" : "s"}${r.custom.length ? ` · ${r.custom.length} symbol${r.custom.length > 1 ? "s" : ""} from the file` : ""}`, r.warnings.length ? { description: r.warnings.join(" · ") } : undefined)
+        return
+      }
       const imp = spiceToKirk(f.text, f.name)
       if (!imp.parts) { toast.error(`${f.name}: no parts found that Space Bench can import`); return }
       if (await openCode(imp.kirk, f.name)) toast.success(`Imported ${f.name} · ${imp.parts} parts${imp.skipped.length ? ` · ${imp.skipped.length} line${imp.skipped.length > 1 ? "s" : ""} skipped (listed at the end of the code)` : ""}`)
+    } catch (e) { toast.error(String(e instanceof Error ? e.message : e)) }
+  }
+  const onExportKicad = async () => {
+    try {
+      const name = `${doc.title.replace(/[^\w\- ]+/g, "").trim() || "circuit"}.kicad_sch`
+      const p = await saveExport(name, "kicad_sch", exportKicadSch({ ...doc, probes }, name.replace(/\.kicad_sch$/, "")))
+      if (p) toast.success(`Exported ${p.split("/").pop()}`, { description: "Opens in KiCad 8 and 9. Tools → Update Symbols from Library swaps in KiCad's own symbol drawings." })
     } catch (e) { toast.error(String(e instanceof Error ? e.message : e)) }
   }
   const openRecent = async (p: RecentProject) => {
@@ -980,7 +1001,7 @@ export default function App() {
             await item.insert([
               await MenuItem.new({ id: "home", text: "Start Screen", accelerator: "CmdOrCtrl+Shift+H", action: () => menuRef.current.home() }),
               await MenuItem.new({ id: "examples", text: "Examples…", accelerator: "CmdOrCtrl+Shift+E", action: () => examplesRef.current() }),
-              await MenuItem.new({ id: "import", text: "Import Kirk / Netlist…", accelerator: "CmdOrCtrl+I", action: () => menuRef.current.import() }),
+              await MenuItem.new({ id: "import", text: "Import Kirk / KiCad / Netlist…", accelerator: "CmdOrCtrl+I", action: () => menuRef.current.import() }),
               await PredefinedMenuItem.new({ item: "Separator" }),
               await MenuItem.new({ id: "settings", text: "Settings…", accelerator: "CmdOrCtrl+,", action: () => menuRef.current.settings() }),
               await PredefinedMenuItem.new({ item: "Separator" }),
@@ -1480,7 +1501,7 @@ export default function App() {
       )}
       <div className={screen === "work" ? "flex h-full flex-col" : "hidden"}>
         <TitleBar title={doc.title} dirty={doc !== savedDoc} dark={dark} onToggleTheme={toggleTheme} onNew={onNew} onOpen={onOpen} onSave={onSave} onSearch={() => setBrowser({ open: true })} onExamples={() => setExamplesOpen(true)}
-          onImport={onImport} onHome={goHome} onSettings={() => openSettings()}
+          onImport={onImport} onExportKicad={onExportKicad} onHome={goHome} onSettings={() => openSettings()}
           view={view} setView={(v) => { setAnalysisOpen(false); setRunOpen(false); setPcbOpen(false); if (v !== "schematic" && view === "schematic") regenerate(); setView(v) }}
           analysisOpen={analysisOpen} onAnalysis={() => { setRunOpen(false); setPcbOpen(false); setAnalysisOpen((o) => !o) }}
           runOpen={runOpen} onRuns={() => { setAnalysisOpen(false); setPcbOpen(false); setRunOpen((o) => !o) }} running={running}

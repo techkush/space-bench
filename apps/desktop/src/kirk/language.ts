@@ -3,7 +3,7 @@
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language"
 import { tags as t } from "@lezer/highlight"
 
-const KEYWORDS = new Set("circuit component supply ground net nc import library use simulate measure assert probe scope meter funcgen bode logger spectrum sweep montecarlo temp environment stimulus seed for in param pins symbol footprint model behavior draw export layout true false runs seed tolerance points lin log severity wire label power at rot mirror unit".split(" "))
+const KEYWORDS = new Set("circuit component supply ground net nc import library use simulate measure assert check not parts probe scope meter funcgen bode logger spectrum sweep montecarlo temp environment stimulus seed for in param pins symbol footprint model behavior draw export layout true false runs seed tolerance points lin log severity wire label power at rot mirror unit".split(" "))
 export const CONSTRUCTORS = ["R", "C", "L", "Pot", "D", "LED", "Zener", "Schottky", "NPN", "PNP", "NMOS", "PMOS", "NJFET", "PJFET", "Vdc", "Vsin", "Vpulse", "Vpwl", "Idc", "Isin", "Ipulse", "OpAmp", "NE555", "Switch", "PushButton", "Battery", "Lamp", "Speaker", "Fuse", "lib"]
 const CTOR = new Set(CONSTRUCTORS)
 export const FUNCTIONS = ["avg", "rms", "pp", "max", "min", "final", "at", "frequency", "period", "duty", "rise_time", "fall_time", "gain_db", "phase", "fc", "bandwidth", "abs", "sqrt", "log10", "exp"]

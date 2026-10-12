@@ -4,7 +4,7 @@
 import type { Stimulus } from "@/lib/stimulus"
 import type { ComponentDef } from "@/kirk/components"
 import type { Board } from "@/pcb/board"
-import { getSymbol, unitLetter, type KPin, type SymbolDef } from "@/lib/kicad"
+import { getSymbol, registerBuiltin, unitLetter, type KPin, type SymbolDef } from "@/lib/kicad"
 
 export const UNIT_PX = 12.7
 
@@ -90,6 +90,8 @@ export interface Doc {
   library?: { name: string; version?: string }
   /** the sketch of each programmable board in the circuit (Arduino, Pico), by reference: A1 → its files */
   firmware?: Record<string, Firmware>
+  /** symbols the circuit brought with it (a KiCad schematic's own, not in the bundled library) */
+  symbols?: SymbolDef[]
 }
 
 /** An Arduino sketch: `sketch.ino` and any other files, plus libraries.txt (one library per line). */
@@ -209,5 +211,8 @@ export function emptyDoc(): Doc {
   }
 }
 
-/** Every library id the document uses (to preload symbols). */
-export const docSymbols = (d: Doc) => new Set(d.parts.map((p) => p.lib))
+/** Every library id the document uses (to preload symbols); the symbols it carries are registered first. */
+export function docSymbols(d: Doc): Set<string> {
+  for (const s of d.symbols ?? []) registerBuiltin(s)
+  return new Set(d.parts.map((p) => p.lib))
+}

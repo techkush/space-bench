@@ -560,7 +560,7 @@ function Instruments({ s }: { s: Settings }) {
 }
 
 export const SHORTCUTS: { group: string; items: [string, string][] }[] = [
-  { group: "File", items: [[`${MOD}N`, "New circuit"], [`${MOD}O`, "Open…"], [`${MOD}S`, "Save"], [`${MOD}I`, "Import Kirk / netlist…"], [`${MOD}⇧E`, "Examples…"], [`${MOD}⇧H`, "Start screen"], [`${MOD},`, "Settings"]] },
+  { group: "File", items: [[`${MOD}N`, "New circuit"], [`${MOD}O`, "Open…"], [`${MOD}S`, "Save"], [`${MOD}I`, "Import Kirk / KiCad / netlist…"], [`${MOD}⇧E`, "Examples…"], [`${MOD}⇧H`, "Start screen"], [`${MOD},`, "Settings"]] },
   { group: "Edit", items: [[`${MOD}Z`, "Undo"], [`${MOD}⇧Z`, "Redo"], [`${MOD}D`, "Duplicate"], [`${MOD}A`, "Select all"], ["⌫", "Delete selection"], [`${MOD}R / R`, "Rotate"], ["X / Y", "Mirror"], ["Esc", "Cancel / select tool"]] },
   { group: "Tools", items: [["W", "Wire"], ["P", "Probe"], ["H", "Pan"], ["⇧X", "No-connect flag"], ["A", "Add part (part browser)"], [`${MOD}K`, "Search parts"], ["R C L D …", "Quick-place a part"]] },
   { group: "Simulation", items: [["F5", "Simulate"], ["Space", "Play / pause real-time playback"]] },

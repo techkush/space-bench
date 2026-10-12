@@ -146,6 +146,11 @@ ${CHEAT_SHEET.map(([c, w]) => `- ${c}  — ${w}`).join("\n")}
   Diodes: 1N4148 1N4001…1N4007 1N5817…1N5819 BAT54. Other values get a generic model.
 - NE555 pins: VCC GND TRIG THRES DISCH OUT RST CONT. OpAmp pins: 1 = +in, 2 = −in, 3 = V+, 4 = V−, 5 = out.
 - Exactly one ground per circuit ("ground GND"); every node needs a DC path to ground.
+- Repeats: for i in 1..8 { R{i} = R(1k)  N{i} -- R{i} -- N{i+1} } (names take i, i+1, 2*i; loops nest; lists: for i in [1, 2, 5]).
+- Properties (inside the circuit): R1.footprint = "Resistor_SMD:R_0603_1608Metric"  R1.MPN = "RC0603FR-0710KL"  R1.tol = 1 %
+  Whole selections: parts(R*).footprint = "…"  parts(C*, value: 100n).MPN = "…"  parts(/U[0-9]+/, on: VCC) … (filters: value lib on footprint or any field).
+- Design rules, checked on every compile: check connected(U1.OUT, R3.1)  check not connected(OUT, VCC)  check parts(C*).footprint
+  check parts(R*).value == 10k  check parts(R*).count == 8 — use them to state what must hold, then fix what fails (V510).
 - AC sweeps need a source with ac: (e.g. Vsin(amp: 1 V, freq: 1 kHz, ac: 1 V)).
 - Measurements: max min avg rms pp final frequency period duty rise_time (transient), fc gain_db phase (AC). e.g. "measure f = frequency(V(OUT))".
 
