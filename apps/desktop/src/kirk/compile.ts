@@ -12,6 +12,7 @@ import { parse } from "./parser"
 import { autoLayout } from "./autolayout"
 import { compileVariant, componentsOf, evalWith, instanceEnv, ParamError, paramsText, registerComponent, type ComponentDef, type Value } from "./components"
 import { resolveFeeds } from "@/lib/feeds"
+import { expandFor, propertyChanges, runCheck, unfilled, type SelPart } from "./select"
 import type { Stimulus } from "@/lib/stimulus"
 
 export interface IRPart { ref: string; spec: PartSpec; span: Span; exclude: boolean }
@@ -117,11 +118,13 @@ export async function compileKirk(src: string, prev?: Doc | null, opts: CompileO
     return { ok: false, diagnostics, ir: null, doc: null, file }
   }
 
+  // ---- for loops unrolled: the rest of the compiler sees plain statements
+  const body = expandFor(circuit.body, diag)
   // ---- collect part declarations (statements and inline in chains)
   const decls: PartDecl[] = []
   const supplies: Extract<Stmt, { k: "supply" }>[] = []
   const grounds: string[] = []
-  for (const s of circuit.body) {
+  for (const s of body) {
     if (s.k === "part") decls.push(s)
     if (s.k === "conn") { for (const e of s.ends) if (e.k === "inline") decls.push(e.decl) }
     if (s.k === "supply") supplies.push(s)
@@ -149,6 +152,7 @@ export async function compileKirk(src: string, prev?: Doc | null, opts: CompileO
   const parts: IRPart[] = []
   const byRef = new Map<string, IRPart>()
   for (const d of decls) {
+    if (unfilled(d.ref)) { diag({ code: "V505", message: `${d.ref}: the name uses a variable no for loop defines`, span: d.span }); continue }
     if (byRef.has(d.ref)) { diag({ code: "V203", message: `${d.ref} is declared twice`, span: d.span }); continue }
     // an instance of a Kirk component: compile its parameter set into a subcircuit
     const cdef = defs.get(d.call.k === "call" ? d.call.fn : d.call.name)
@@ -233,7 +237,7 @@ export async function compileKirk(src: string, prev?: Doc | null, opts: CompileO
       }
     }
   }
-  for (const s of circuit.body) {
+  for (const s of body) {
     if (s.k !== "conn") continue
     const sd = s.ends.map(sides)
     for (let i = 0; i + 1 < sd.length; i++) {
@@ -272,6 +276,28 @@ export async function compileKirk(src: string, prev?: Doc | null, opts: CompileO
     const open = sym.units.flatMap((u) => u.pins).filter((x) => !x.h && !connected.has(x.n) && !ncs.has(x.n))
     if (open.length && open.length < 6) diagnostics.push({ severity: "warning", code: "V302", message: `${p.ref}: pin${open.length > 1 ? "s" : ""} ${open.map((x) => x.name && x.name !== "~" ? `${x.n} (${x.name.replace(/~\{([^}]*)\}/g, "$1")})` : x.n).join(", ")} not connected — add “-- nc” if intended`, span: p.span })
   }
+  // ---- properties (R1.footprint = …, parts(R*).MPN = …) and design checks (check …)
+  const sel: SelPart[] = parts.map((p) => ({
+    ref: p.ref, lib: p.spec.lib, value: p.spec.value, footprint: p.spec.footprint, fields: { ...p.spec.fields }, exclude: p.exclude,
+    nets: new Map(nets.flatMap((n) => n.pins.filter((x) => x.ref === p.ref).map((x) => [x.n, n.name] as [string, string]))),
+  }))
+  for (const ch of propertyChanges(body, sel, diag)) {
+    const p = byRef.get(ch.ref)!
+    if (ch.prop === "value") p.spec = { ...p.spec, value: ch.text }
+    else if (ch.prop === "footprint") p.spec = { ...p.spec, footprint: ch.text }
+    else if (ch.prop === "exclude") p.exclude = ch.text === "1"
+    else p.spec = { ...p.spec, fields: { ...p.spec.fields, [ch.field!]: ch.text } }
+  }
+  const checkCtx = {
+    parts: sel, nets: new Set(nets.map((n) => n.name)),
+    pin: (ref: string, text: string) => { const part = byRef.get(ref); if (!part) return { error: `unknown part “${ref}”` }; const r = findPin(getSymbol(part.spec.lib)!, text); return "error" in r ? r : { n: r.pin.n } },
+  }
+  for (const s of body) {
+    if (s.k !== "check") continue
+    const why = runCheck(s, checkCtx, diag)
+    if (why) diag({ code: "V510", message: `check failed: ${why}`, span: s.span })
+  }
+
   if (parts.length && !opts.componentMode && !nets.some((n) => n.ground && n.pins.length)) diagnostics.push({ severity: "error", code: "V303", message: "nothing is connected to ground — connect a pin to GND", span: circuit.span })
 
   const title = strArg(circuit.annotations.find((a) => a.name === "title")?.args[0]?.value)

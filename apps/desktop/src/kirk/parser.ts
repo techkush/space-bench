@@ -84,10 +84,10 @@ export function parse(src: string): { file: File; diagnostics: Diagnostic[] } {
   }
   function postfix(): Expr {
     let e = primary()
-    while (at(".") && (peek(1).kind === "ident" || peek(1).kind === "number")) {
+    while (at(".") && (peek(1).kind === "ident" || peek(1).kind === "number" || peek(1).kind === "quoted")) {
       next()
       const t = next()
-      e = { k: "member", obj: e, prop: t.text, span: { from: e.span.from, to: t.to } }
+      e = { k: "member", obj: e, prop: t.kind === "quoted" ? t.unit ?? "" : t.text, span: { from: e.span.from, to: t.to } }
     }
     return e
   }
@@ -133,11 +133,45 @@ export function parse(src: string): { file: File; diagnostics: Diagnostic[] } {
       return { k: "list", items, span: span(t.from) }
     }
     if (t.kind === "ident") {
+      if (t.text === "parts" && peek(1).kind === "(") return selector()
       next()
       if (at("(")) return { k: "call", fn: t.text, args: args(), span: span(t.from) }
       return { k: "id", name: t.text, span: { from: t.from, to: t.to } }
     }
     return fail(`expected a value, found “${t.text || t.kind}”`, t)
+  }
+
+  /** parts(R*), parts("U?", lib: "Amplifier_Operational:*"), parts(value: 100n, on: VCC) */
+  function selector(): Extract<Expr, { k: "sel" }> {
+    const s = next().from
+    expect("(")
+    skipNl()
+    let pattern: string | undefined
+    const named = () => peek().kind === "ident" && peek(1).kind === ":"
+    if (!at(")") && !named()) {
+      if (at("string")) pattern = next().unit ?? ""
+      else {
+        // a bare pattern: everything up to the comma, as written (R*, C1?, /R[0-9]+/)
+        const a = peek().from
+        let b = a
+        while (!at(",") && !at(")") && !at("newline") && !at("eof")) b = next().to
+        pattern = src.slice(a, b)
+      }
+      skipNl()
+      if (at(",")) { next(); skipNl() }
+    }
+    const filters: Arg[] = []
+    while (!at(")")) {
+      const fs = peek().from
+      if (!named()) fail("expected a filter: value: 10k, lib: \"Device:R\", on: VCC or footprint: \"\"")
+      const name = next().text
+      next()
+      filters.push({ name, value: expr(), span: span(fs) })
+      skipNl()
+      if (at(",")) { next(); skipNl() } else break
+    }
+    expect(")", "“)”")
+    return { k: "sel", pattern, filters, span: span(s) }
   }
 
   // ---------------------------------------------------------------- circuit statements
@@ -213,6 +247,30 @@ export function parse(src: string): { file: File; diagnostics: Diagnostic[] } {
         sides[a.name as "left"] = v.k === "list" ? v.items.map((x) => (x.k === "id" ? x.name : "")) : v.k === "id" ? [v.name] : []
       }
       return { k: "symbolbox", sides, span: span(s) }
+    }
+    if (atWord("for") && peek(1).kind === "ident" && peek(2).kind === "ident" && peek(2).text === "in") {
+      next(); const name = next().text; next()
+      const values = expr()
+      return { k: "for", name, values, body: block(stmt), span: span(s) }
+    }
+    if (atWord("check") && peek(1).kind !== "=" && peek(1).kind !== "--") {
+      next()
+      const negate = atWord("not") ? (next(), true) : false
+      return { k: "check", negate, expr: expr(), span: span(s) }
+    }
+    // R1.footprint = "…"  /  R1.`Manufacturer PN` = "…"
+    if (peek().kind === "ident" && peek(1).kind === "." && (peek(2).kind === "ident" || peek(2).kind === "quoted") && peek(3).kind === "=") {
+      const rt = next(); next()
+      const pt = next(); next()
+      return { k: "set", target: { k: "ref", ref: rt.text, span: { from: rt.from, to: rt.to } }, prop: pt.kind === "quoted" ? pt.unit ?? "" : pt.text, value: expr(), span: span(s) }
+    }
+    // parts(R*).footprint = "…"
+    if (atWord("parts") && peek(1).kind === "(") {
+      const e = postfix()
+      if (e.k !== "member" || e.obj.k !== "sel") fail("expected a property after the selection, e.g. parts(R*).footprint = \"Resistor_SMD:R_0603_1608Metric\"")
+      const m = e as Extract<Expr, { k: "member" }>
+      expect("=", "“=”")
+      return { k: "set", target: m.obj as Extract<Expr, { k: "sel" }>, prop: m.prop, value: expr(), span: span(s) }
     }
     if (peek().kind === "ident" && peek(1).kind === "=" ) {
       const ref = next().text; next()

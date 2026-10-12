@@ -12,6 +12,8 @@ export type Expr =
   | { k: "neg"; a: Expr; span: Span }
   | { k: "list"; items: Expr[]; span: Span }
   | { k: "range"; a: Expr; b: Expr; span: Span }
+  /** parts(R*, value: 10k, on: VCC) — the parts a pattern and filters select */
+  | { k: "sel"; pattern?: string; filters: Arg[]; span: Span }
 
 export interface Arg { name?: string; value: Expr; span: Span }
 
@@ -38,6 +40,12 @@ export type Stmt =
   /** inside a component: which pins go on which side of its box symbol */
   | { k: "symbolbox"; sides: Partial<Record<"left" | "right" | "top" | "bottom", string[]>>; span: Span }
   | { k: "describe"; text: string; span: Span }
+  /** for i in 1..8 { … } — the body once per value; names like R{i} and N{i+1} take the value */
+  | { k: "for"; name: string; values: Expr; body: Stmt[]; span: Span }
+  /** R1.footprint = "…"  or  parts(R*).MPN = "…" — set a property of a part or of every selected part */
+  | { k: "set"; target: { k: "ref"; ref: string; span: Span } | Extract<Expr, { k: "sel" }>; prop: string; value: Expr; span: Span }
+  /** check connected(U1.OUT, R3.1)  /  check parts(C*).footprint  /  check parts(R*).count == 8 — a design rule, checked on compile */
+  | { k: "check"; negate: boolean; expr: Expr; span: Span }
 
 export interface LayoutLine { k: "at"; target: string; unit?: string; x: number; y: number; rot: number; mirror: boolean; lib?: string; value?: string; span: Span }
 export interface LayoutWire { k: "wire"; points: [number, number][]; span: Span }
