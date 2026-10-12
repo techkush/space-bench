@@ -77,7 +77,7 @@ describe("system prompt", () => {
       expect([...nl.issues, ...buildNetlist(r.doc!, nl, r.doc!.defaultAnalysis).issues].filter((i) => i.severity === "error"), e.title).toEqual([])
     }
     expect(systemPrompt()).toContain("OpAmp pins: 1 = +in")
-    expect(TOOLS.map((t) => t.name)).toEqual(["get_circuit", "write_kirk", "simulate", "measure", "add_probe", "remove_probe", "set_meter", "set_stimulus", "set_input", "find_parts"])
+    expect(TOOLS.map((t) => t.name)).toEqual(["get_circuit", "write_kirk", "simulate", "measure", "add_probe", "remove_probe", "set_meter", "set_stimulus", "set_input", "get_firmware", "write_firmware", "compile_firmware", "run_with_firmware", "check_setup", "install", "find_parts"])
   })
   it.skipIf(!ngspice)("the op-amp example really has a gain of 10", async () => {
     const r = await compileKirk(PROMPT_EXAMPLES.find((e) => e.title.startsWith("Op-amp"))!.code)

@@ -1,7 +1,7 @@
 // The firmware side of the circuit workspace: the sketch of each board in the schematic,
 // compile, run the circuit and the firmware together, and the Serial Monitor.
 import { lazy, Suspense, useEffect, useRef, useState } from "react"
-import { Cpu, Hammer, Loader2, Play, Square, X } from "lucide-react"
+import { Cpu, Hammer, Loader2, Play, Square, X, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import type { Doc, Firmware } from "@/editor/model"
@@ -12,12 +12,14 @@ const SketchEditor = lazy(() => import("@/mcu/SketchEditor"))
 
 const formatBytes = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(1)} kB` : `${n} B`)
 
-export function FirmwarePanel({ doc, boards, active, setActive, onChange, cosim, dark, onClose }: {
+export function FirmwarePanel({ doc, boards, active, setActive, onChange, cosim, dark, onClose, onAskAi }: {
   doc: Doc
   boards: { ref: string; board: BoardDef }[]
   active: string | null
   setActive: (ref: string) => void
   onChange: (ref: string, fw: Firmware) => void
+  /** a compile or a run failed: hand it to the AI assistant */
+  onAskAi?: (text: string) => void
   cosim: CoSimControl
   dark: boolean
   onClose: () => void
@@ -80,8 +82,16 @@ export function FirmwarePanel({ doc, boards, active, setActive, onChange, cosim,
             className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><X className="size-4" /></button>
         </div>
       </div>
-      <div className={`shrink-0 truncate border-b px-3 py-1 text-xs ${cosim.status === "error" || (build && !build.ok) ? "text-destructive" : "text-muted-foreground"}`} title={status}>
-        {(cosim.status === "compiling" || cosim.status === "starting" || compiling) && <Loader2 className="mr-1 inline size-3 animate-spin" />}{status}
+      <div className={`flex shrink-0 items-center gap-2 border-b px-3 py-1 text-xs ${cosim.status === "error" || (build && !build.ok) ? "text-destructive" : "text-muted-foreground"}`} title={status}>
+        <span className="min-w-0 flex-1 truncate">{(cosim.status === "compiling" || cosim.status === "starting" || compiling) && <Loader2 className="mr-1 inline size-3 animate-spin" />}{status}</span>
+        {onAskAi && (cosim.status === "error" || (build && !build.ok)) && (
+          <button className="flex shrink-0 items-center gap-1 rounded-md border border-destructive/40 px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-accent"
+            onClick={() => onAskAi(cosim.status === "error"
+              ? `Running the circuit with the firmware failed: ${cosim.error ?? "unknown error"}\nFind the cause and fix it, then run it again.`
+              : `${cur?.ref ?? "The board"}'s sketch doesn't compile:\n${build?.diagnostics.filter((d) => d.severity === "error").slice(0, 8).map((d) => `${d.file}:${d.line}: ${d.message}`).join("\n") || build?.log.slice(-1500) || "see the compiler output"}\nFind the cause and fix it, then compile and run it.`)}>
+            <Sparkles className="size-3" /> Fix with AI
+          </button>
+        )}
       </div>
       <div className="flex shrink-0 gap-1 border-b px-2 py-1">
         {files.map((f) => (

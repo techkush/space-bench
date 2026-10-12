@@ -27,7 +27,7 @@ const SUGGESTIONS = [
 ]
 
 const TOOL_ICON: Record<string, typeof Code2> = { write_kirk: Code2, simulate: Activity, add_probe: Gauge, remove_probe: Gauge, set_meter: Gauge, measure: Gauge, find_parts: Search, get_circuit: Cpu }
-const TOOL_LABEL: Record<string, string> = { write_kirk: "Wrote the circuit", simulate: "Simulated", add_probe: "Probe", remove_probe: "Probe", set_meter: "Multimeter", measure: "Measured", find_parts: "Searched parts", get_circuit: "Read the circuit" }
+const TOOL_LABEL: Record<string, string> = { write_kirk: "Wrote the circuit", simulate: "Simulated", add_probe: "Probe", remove_probe: "Probe", set_meter: "Multimeter", measure: "Measured", find_parts: "Searched parts", get_circuit: "Read the circuit", get_firmware: "Read the firmware", write_firmware: "Wrote the sketch", compile_firmware: "Compiled", run_with_firmware: "Ran with firmware", check_setup: "Checked the setup", install: "Install" }
 
 /** Downscale an image to ≤ 1568 px on the long side (what the model sees anyway) and base64 it. */
 async function readImage(file: File): Promise<Img> {

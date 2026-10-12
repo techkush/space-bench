@@ -61,7 +61,9 @@ import { summarizeResult } from "@/lib/ai/summary"
 import { usePlayback, valuesAt } from "@/lib/playback"
 import { FirmwarePanel } from "@/components/FirmwarePanel"
 import { boardParts, isProgrammable } from "@/cosim/boards"
-import { useCoSim } from "@/cosim/useCoSim"
+import { firmwareOf, useCoSim } from "@/cosim/useCoSim"
+import { usePermission } from "@/components/PermissionDialog"
+import { checkSetup, installSetup } from "@/mcu/setup"
 import { buildNetlist, resolveSim, setSolverOptions } from "@/lib/spice"
 import { explainFailure, refsInMessage, stamp, startRun, type RunHandle, type SpanStatus } from "@/lib/runlog"
 import { RunView } from "@/components/RunView"
@@ -283,7 +285,10 @@ export default function App() {
   const cosim = useCoSim({
     doc, cliBin: settings.arduinoCliPath,
     onFrame: (f) => { cosimWindow.current = f.window; setResult(f.window); setOpValues(f.avg); setModuleViews(f.mods); setError(null) },
-    onError: (msg) => { setError(msg); toast.error(`Circuit + firmware stopped: ${msg.split("\n")[0]}`) },
+    onError: (msg) => {
+      setError(msg)
+      toast.error(`Circuit + firmware stopped: ${msg.split("\n")[0]}`, { duration: 12000, action: { label: "Fix with AI", onClick: () => askAiRef.current(`Running the circuit with the firmware failed: ${msg}\nFind the cause and fix it, then run it again.`) } })
+    },
   })
 
   // ---- projects (lib/project.ts): the open project, its circuit file, the user's libraries folder
@@ -426,8 +431,9 @@ export default function App() {
     h.event({ kind: "failed", title: info.title, detail: `${info.detail}${msg && !info.detail.includes(msg.split("\n")[0]) ? ` — ngspice: ${msg.split("\n")[0]}` : ""}`, refs })
     for (const l of msg.split("\n").slice(0, 8)) h.log(`${stamp(h.now())} error: ${l}`, "error")
     if (!quiet) toast.error(info.title, {
-      description: info.detail, duration: 8000,
-      action: refs.length ? { label: "Show on schematic", onClick: () => showRefsRef.current(refs) } : { label: "Details", onClick: () => openRunRef.current(h.id) },
+      description: info.detail, duration: 12000,
+      action: { label: "Fix with AI", onClick: () => askAiRef.current(`The simulation failed: ${info.title}. ${info.detail}\nngspice said: ${msg.split("\n").slice(0, 4).join(" · ")}\nFind the cause and fix it, then simulate again.`) },
+      cancel: refs.length ? { label: "Show on schematic", onClick: () => showRefsRef.current(refs) } : { label: "Details", onClick: () => openRunRef.current(h.id) },
     })
   }
 
@@ -654,6 +660,12 @@ export default function App() {
   // ---- AI assistant: the agent's view of (and hands on) the app. Everything goes through refs,
   // because one chat turn runs several tools before React re-renders.
   const [aiOpen, setAiOpen] = useState(false)
+  /** a message for the assistant ("Fix with AI"): the chat sends it */
+  const [aiAsk, setAiAsk] = useState<{ id: number; text: string } | null>(null)
+  const askAiRef = useRef<(text: string) => void>(() => {})
+  const permission = usePermission()
+  const cosimRef = useRef(cosim)
+  cosimRef.current = cosim
   const analysisRef = useRef(analysis)
   analysisRef.current = analysis
   const dmmRef = useRef(dmm)
@@ -786,7 +798,80 @@ export default function App() {
       const hits = searchIndex(rows, q, 12)
       return hits.length ? hits.map((r) => `${r.lib}:${r.name} — ${r.desc}`).join("\n") : `No simulation-ready part matches “${q}”.`
     },
+    firmware: {
+      read: (ref) => {
+        const d = latestDoc.current, bs = boardParts(d).filter((b) => !ref || b.part.ref.toUpperCase() === ref.toUpperCase())
+        if (!bs.length) return ref ? `No board ${ref} — place an Arduino / Pico in the schematic` : "No board in the schematic runs a sketch yet (place an Arduino UNO / Nano / Mega or a Pico)."
+        return bs.map((b) => {
+          const fw = firmwareOf(d, b.part.ref, b.board), build = cosimRef.current.builds[b.part.ref]
+          const errs = build && !build.ok ? `\nLast compile FAILED:\n${build.diagnostics.filter((x) => x.severity === "error").map((x) => `${x.file}:${x.line}: ${x.message}`).join("\n") || build.log.slice(-2000)}` : build ? "\nLast compile: ok" : "\nNot compiled yet"
+          const serial = cosimRef.current.serial[b.part.ref]
+          return `## ${b.part.ref}: ${b.board.name}\n${fw.files.map((f) => `--- ${f.name}\n${f.content}`).join("\n")}\n--- libraries.txt\n${fw.libraries ?? ""}${errs}${cosimRef.current.error ? `\nLast run error: ${cosimRef.current.error}` : ""}${serial ? `\nSerial (last):\n${serial.slice(-1200)}` : ""}`
+        }).join("\n\n")
+      },
+      write: (ref, name, content) => {
+        const d = latestDoc.current, b = boardParts(d).find((x) => x.part.ref.toUpperCase() === ref.trim().toUpperCase())
+        if (!b) return `Not written: no board ${ref}`
+        const fw = firmwareOf(d, b.part.ref, b.board)
+        const n = name.trim().replace(/^.*\//, "")
+        let next: typeof fw
+        if (n === "libraries.txt") next = { ...fw, libraries: content }
+        else if (!/\.(ino|h|hpp|c|cpp|py)$/.test(n)) return `Not written: ${n} — use sketch.ino, .h, .cpp or libraries.txt`
+        else next = { ...fw, files: fw.files.some((f) => f.name === n) ? fw.files.map((f) => (f.name === n ? { ...f, content } : f)) : [...fw.files, { name: n, content }] }
+        const nd = { ...d, firmware: { ...d.firmware, [b.part.ref]: next } }
+        latestDoc.current = nd
+        commit(nd)
+        setFwOpen(true); setFwActive(b.part.ref)
+        return `Wrote ${b.part.ref}/${n} (${content.split("\n").length} lines)`
+      },
+      compile: async (ref) => {
+        await new Promise((r) => setTimeout(r, 60)) // the edit reaches the compiler's doc first
+        const b = boardParts(latestDoc.current).find((x) => x.part.ref.toUpperCase() === ref.trim().toUpperCase())
+        if (!b) return { ok: false, text: `No board ${ref}` }
+        try {
+          const r = await cosimRef.current.compile(b.part.ref)
+          if (r.ok) return { ok: true, text: `Compiled${r.flash ? ` — ${r.flash.used} of ${r.flash.max} bytes of flash` : ""}` }
+          return { ok: false, text: `Compile failed:\n${r.diagnostics.filter((x) => x.severity === "error").map((x) => `${x.file}:${x.line}: ${x.message}`).join("\n") || r.log.slice(-3000)}` }
+        } catch (e) { return { ok: false, text: `Compile failed: ${e instanceof Error ? e.message : String(e)}` } }
+      },
+      run: async (seconds) => {
+        await new Promise((r) => setTimeout(r, 60))
+        const c = cosimRef.current
+        if (c.active) c.stop()
+        void c.start()
+        const t0 = Date.now()
+        while (Date.now() - t0 < (seconds + 30) * 1000) {
+          await new Promise((r) => setTimeout(r, 200))
+          const s = cosimRef.current
+          if (s.status === "error") return { ok: false, text: `The run failed: ${s.error}` }
+          if (s.status === "running" && s.clock && s.clock.t >= seconds) break
+        }
+        const s = cosimRef.current
+        const serial = Object.entries(s.serial).map(([ref, t]) => `[${ref}]\n${t.slice(-1500)}`).join("\n") || "(nothing printed)"
+        s.stop()
+        return { ok: true, text: `Ran ${s.clock?.t.toFixed(2) ?? "?"} s of circuit + firmware (now stopped).\nSerial output:\n${serial}` }
+      },
+      checkSetup: async () => {
+        const d = latestDoc.current
+        const items = await checkSetup(boardParts(d).map((b) => b.board), settings.arduinoCliPath)
+        if (!items.length) return "No board in the schematic needs anything."
+        return items.map((i) => `${i.ok ? "ok     " : "MISSING"} ${i.id} — ${i.label}: ${i.detail}${!i.ok && i.install ? ` (install: ${i.install})` : ""}`).join("\n")
+      },
+      install: async (item, reason) => {
+        const defs = boardParts(latestDoc.current).map((b) => b.board)
+        const items = await checkSetup(defs, settings.arduinoCliPath)
+        const it = items.find((i) => i.id === item.trim())
+        if (!it) return { ok: false, text: `Unknown item ${item} — check_setup lists: ${items.map((i) => i.id).join(", ")}` }
+        if (it.ok) return { ok: true, text: `${it.label} is already installed` }
+        if (!it.install) return { ok: false, text: `${it.label} can't be installed from here: ${it.detail}` }
+        if (!(await permission.ask(`Install ${it.label}?`, it.install, reason))) return { ok: false, text: "The user didn't allow the install. Stop, and tell them how to install it themselves (Settings → Microcontrollers)." }
+        const id = toast.loading(`Installing ${it.label}…`)
+        try { const text = await installSetup(it.id, defs, settings.arduinoCliPath, (t) => toast.loading(`${it.label}: ${t}`, { id })); toast.success(`Installed ${it.label}`, { id }); return { ok: true, text } }
+        catch (e) { toast.error(`Install failed: ${e instanceof Error ? e.message : String(e)}`, { id }); return { ok: false, text: `Install failed: ${e instanceof Error ? e.message : String(e)}` } }
+      },
+    },
   }
+  askAiRef.current = (text: string) => { openAi(); setAiAsk({ id: Date.now(), text }) }
   // the chat sits beside the editor: make the code pane wide enough for both
   const openAi = () => { setPcbOpen(false); setAnalysisOpen(false); setRunOpen(false); if (view === "schematic") { regenerate(); setView("split") } setCodeW((w) => Math.max(w, Math.min(940, window.innerWidth - 560))); setAiOpen(true) }
 
@@ -1458,7 +1543,7 @@ export default function App() {
                 measures={measured.measures} asserts={measured.asserts} ercErrors={errors.length}
                 onCursorRef={(ref) => { if (!ref) return; const ids = doc.parts.filter((p) => p.ref === ref).map((p) => p.id); if (ids.length && !ids.every((id) => selection.parts.has(id))) setSelection({ parts: new Set(ids), wires: new Set() }) }}
                 aiOpen={aiOpen} onToggleAi={() => (aiOpen ? setAiOpen(false) : openAi())}
-                ai={<ErrorBoundary name="AI assistant"><AiChat host={aiHost} sessionKey={chatKey} onOpenSettings={() => openSettings("ai")} onOpenTerminal={() => { setTab("terminal"); setDockMax(false) }} onClose={() => setAiOpen(false)} /></ErrorBoundary>} />
+                ai={<ErrorBoundary name="AI assistant"><AiChat host={aiHost} sessionKey={chatKey} request={aiAsk} onOpenSettings={() => openSettings("ai")} onOpenTerminal={() => { setTab("terminal"); setDockMax(false) }} onClose={() => setAiOpen(false)} /></ErrorBoundary>} />
             </div>
           )}
           {view === "split" && <Splitter axis="x" onDrag={(d) => setCodeW((w) => clamp(w + d, 320, window.innerWidth - 480))} onReset={() => setCodeW(640)} />}
@@ -1516,7 +1601,7 @@ export default function App() {
               <div className="flex shrink-0 flex-col" style={{ width: clamp(fwW, 360, window.innerWidth - 560) }}>
                 <ErrorBoundary name="firmware panel"><FirmwarePanel doc={doc} boards={boards} active={fwActive} setActive={setFwActive}
                   onChange={(ref, fw) => history.replace((d) => ({ ...d, firmware: { ...d.firmware, [ref]: fw } }))}
-                  cosim={cosim} dark={dark} onClose={() => setFwOpen(false)} /></ErrorBoundary>
+                  cosim={cosim} dark={dark} onClose={() => setFwOpen(false)} onAskAi={(t) => askAiRef.current(t)} /></ErrorBoundary>
               </div>
             </>
           )}
@@ -1554,6 +1639,7 @@ export default function App() {
         onApply={applySetup} onRun={(pt) => { const next = applySetup(pt); runMany(next, pt.defaultAnalysis) }} />
       <PartBrowser open={browser.open} initialQuery={browser.q} onOpenChange={(o) => setBrowser((b) => ({ ...b, open: o }))} onPlace={(id) => startPlace(id)} recent={recent} showAll={showAllParts} />
       <Toaster position="bottom-center" theme={dark ? "dark" : "light"} />
+      {permission.dialog}
     </TooltipProvider>
   )
 }
