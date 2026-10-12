@@ -41,6 +41,8 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
   const [builds, setBuilds] = useState<Record<string, BoardBuild>>({})
   const [serial, setSerial] = useState<Record<string, string>>({})
   const [clock, setClock] = useState<{ t: number; speed: number } | null>(null)
+  /** each board's pins after the last frame (the live code view) */
+  const [live, setLive] = useState<CoSimFrame["live"]>({})
   const [error, setError] = useState<string | null>(null)
   const docRef = useRef(o.doc)
   docRef.current = o.doc
@@ -134,6 +136,7 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
         (net) => simulate(net, { run: `cosim${my}-${++n}` }), { frame: cb.current.frame ?? 0.02 })
       sim.current = s
       setSerial({})
+      setLive({})
       setStatus("running")
       const wall0 = performance.now()
       let lastWall = wall0, lastT = 0, speed = 1
@@ -141,6 +144,7 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
         const f = await s.step()
         if (my !== token.current) break
         cb.current.onFrame(f)
+        setLive(f.live)
         const printed = Object.entries(f.serial).filter(([, t]) => t)
         if (printed.length) setSerial((m) => { const next = { ...m }; for (const [ref, t] of printed) next[ref] = ((next[ref] ?? "") + t).slice(-SERIAL_KEEP); return next })
         // never run ahead of the wall clock; when ngspice is slower, run as fast as it goes
@@ -163,7 +167,7 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
   const clearSerial = useCallback((ref: string) => setSerial((m) => ({ ...m, [ref]: "" })), [])
   const active = status === "compiling" || status === "starting" || status === "running"
 
-  return { status, active, builds, serial, clock, error, compile, start, stop, sendSerial, clearSerial }
+  return { status, active, builds, serial, clock, live, error, compile, start, stop, sendSerial, clearSerial }
 }
 
 export type CoSimControl = ReturnType<typeof useCoSim>

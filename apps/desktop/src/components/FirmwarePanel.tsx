@@ -1,12 +1,13 @@
 // The firmware side of the circuit workspace: the sketch of each board in the schematic,
 // compile, run the circuit and the firmware together, and the Serial Monitor.
-import { lazy, Suspense, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { Cpu, Hammer, Loader2, Play, Square, X, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import type { Doc, Firmware } from "@/editor/model"
 import type { BoardDef } from "@/mcu/boards"
 import { firmwareOf, type CoSimControl } from "@/cosim/useCoSim"
+import type { LiveView } from "@/mcu/SketchEditor"
 
 const SketchEditor = lazy(() => import("@/mcu/SketchEditor"))
 
@@ -33,6 +34,11 @@ export function FirmwarePanel({ doc, boards, active, setActive, onChange, cosim,
   const serialEnd = useRef<HTMLDivElement>(null)
   const build = cur ? cosim.builds[cur.ref] : undefined
   const serial = cur ? cosim.serial[cur.ref] ?? "" : ""
+  // while the circuit runs, the code shows what its pins are doing
+  const pins = cur ? cosim.live[cur.ref] : undefined
+  const live = useMemo<LiveView | null>(() => (cur && pins && cosim.status === "running"
+    ? { pins, vcc: cur.board.vcc, seconds: cosim.clock?.t ?? 0, serial: serial.slice(-4000), led: cur.board.led }
+    : null), [cur, pins, cosim.status, cosim.clock, serial])
 
   useEffect(() => { serialEnd.current?.scrollIntoView({ block: "end" }) }, [serial])
   useEffect(() => { if (build && !build.ok) setBottom("output") }, [build])
@@ -101,7 +107,7 @@ export function FirmwarePanel({ doc, boards, active, setActive, onChange, cosim,
       <div className="min-h-0 flex-1">
         <Suspense fallback={<div className="flex h-full items-center justify-center text-xs text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" />Loading the editor…</div>}>
           <SketchEditor path={`${cur.ref}/${file}`} language={isLibs ? "plaintext" : file.endsWith(".py") ? "python" : "cpp"} value={content} onChange={setContent} dark={dark}
-            diagnostics={isLibs ? [] : (build?.diagnostics ?? []).filter((d) => d.file === file)} />
+            diagnostics={isLibs ? [] : (build?.diagnostics ?? []).filter((d) => d.file === file)} live={isLibs ? null : live} />
         </Suspense>
       </div>
       <div className="flex h-[38%] min-h-[140px] shrink-0 flex-col border-t">

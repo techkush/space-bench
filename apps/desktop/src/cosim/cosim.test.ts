@@ -121,6 +121,13 @@ void loop() { delay(100); Serial.println(analogRead(A0)); }`)
     expect(reads.length).toBeGreaterThanOrEqual(6)
     expect(reads[0]).toBeLessThan(reads[reads.length - 1])
     expect(reads[reads.length - 1]).toBeGreaterThan(480)
+    // the live code view: D9 is a ~50 % PWM output, A0 reads the filter's voltage
+    const live = last!.live[b.part.ref]
+    expect(live["9"].mode).toBe("out")
+    expect(live["9"].duty).toBeGreaterThan(0.45)
+    expect(live["9"].duty).toBeLessThan(0.55)
+    expect(live["9"].toggles).toBeGreaterThan(2)
+    expect(live.A0.v).toBeGreaterThan(2.3)
     expect(reads[reads.length - 1]).toBeLessThan(545)
   })
 

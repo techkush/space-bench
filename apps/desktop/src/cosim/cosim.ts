@@ -10,6 +10,7 @@
 //
 // Outputs are exact to the edge; inputs lag by one frame (the chip reads the circuit as it was
 // when the frame began). Inductor currents restart at each frame boundary.
+import type { LivePin } from "@/mcu/sim"
 import type { Doc } from "@/editor/model"
 import { deriveNetlist, type Netlist } from "@/editor/netlist"
 import type { JobResult, TranResult } from "@/lib/engine"
@@ -45,6 +46,8 @@ export interface CoSimFrame {
   chipMs: number
   spiceMs: number
   netlist: string
+  /** each board's pins as its sketch sees them (the live code view), by reference */
+  live: Record<string, Record<string, LivePin>>
 }
 
 interface BoardIo extends CoSimBoard {
@@ -122,6 +125,30 @@ export class CoSim {
     return { digital, analog }
   }
 
+  /** Every pin of a board over the frame just run: its mode, level, PWM duty and volts. */
+  private live(b: BoardIo, out: FrameOut, T: number): Record<string, LivePin> {
+    const evs = new Map<string, PinEvent[]>()
+    for (const e of out.events) { const l = evs.get(e.pin); if (l) l.push(e); else evs.set(e.pin, [e]) }
+    const vcc = b.board.vcc
+    const live: Record<string, LivePin> = {}
+    for (const [pin, st] of out.start) {
+      let s = st, t = 0, high = 0, toggles = 0
+      for (const e of evs.get(pin) ?? []) {
+        if (s.out === 1) high += e.t - t
+        if ((s.out === 1) !== (e.out === 1)) toggles++
+        s = e; t = e.t
+      }
+      if (s.out === 1) high += T - t
+      const duty = T > 0 ? Math.min(1, high / T) : s.out === 1 ? 1 : 0
+      const net = b.nets.get(pin)
+      const mode = s.out !== -1 ? "out" : s.pu ? "pullup" : s.pd ? "pulldown" : "in"
+      const v = net ? this.volts(net) : s.out !== -1 ? (toggles > 1 ? duty * vcc : s.out ? vcc : 0) : s.pu ? vcc : 0
+      const floating = !net && mode === "in"
+      live[pin] = { mode, v, level: floating ? 2 : v > vcc / 2 ? 1 : 0, duty, toggles }
+    }
+    return live
+  }
+
   /** The PWL drive of every wired pin of a board over a frame. */
   private drives(b: BoardIo, out: FrameOut, T: number): BoardDrive {
     const evs = new Map<string, PinEvent[]>()
@@ -176,6 +203,7 @@ export class CoSim {
     return {
       t0, t1: this.t, window: this.hist.result(), avg, chipMs, spiceMs, netlist: net.text,
       serial: Object.fromEntries(this.boards.map((b, i) => [b.ref, outs[i].serial])),
+      live: Object.fromEntries(this.boards.map((b, i) => [b.ref, this.live(b, outs[i], T)])),
     }
   }
 
