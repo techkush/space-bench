@@ -1,4 +1,4 @@
-//! Engine validation against analytic results (engine-spec §9).
+//! Engine validation against analytic results.
 
 use sb_engine::{ac, measure, op, tran, Circuit, DiodeModel, Error, Options, Sweep, TranSpec, Waveform};
 use std::f64::consts::PI;

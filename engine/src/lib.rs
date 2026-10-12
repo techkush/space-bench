@@ -1,6 +1,6 @@
 //! # Space Bench Engine
 //!
-//! Our own circuit simulator (see `docs/engine-spec.md`). v0.1 implements
+//! Our own circuit simulator (experimental). v0.1 implements
 //! phases E0–E3: modified nodal analysis, dense LU, Newton–Raphson with
 //! junction limiting + gmin/source stepping, transient (Backward Euler /
 //! trapezoidal with breakpoints and step halving) and AC small-signal.

@@ -1,4 +1,4 @@
-//! Analyses: DC operating point, transient and AC small-signal (engine-spec §5).
+//! Analyses: DC operating point, transient and AC small-signal.
 
 use num_complex::Complex64;
 use serde::Serialize;

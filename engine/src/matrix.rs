@@ -1,8 +1,8 @@
 //! Linear solver for the MNA system `G·x = b`.
 //!
 //! v0.1 uses dense LU with partial pivoting (fine up to a few hundred unknowns).
-//! The sparse LU with AMD ordering from engine-spec §4 replaces this behind the
-//! same interface in phase E1+.
+//! A sparse LU with AMD ordering will replace this behind the
+//! same interface later.
 
 use num_complex::Complex64;
 use std::ops::{AddAssign, Div, Mul, Sub};
