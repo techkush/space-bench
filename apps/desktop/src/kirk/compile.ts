@@ -266,8 +266,6 @@ export async function compileKirk(src: string, prev?: Doc | null, opts: CompileO
   }
   // ERC-style checks on the code
   for (const p of parts) {
-    // an Arduino module's unused pins (INT, AD0 …) are the norm, as on a board
-    if (p.spec.lib.startsWith("Arduino_Modules:")) continue
     const sym = getSymbol(p.spec.lib)!
     const connected = new Set(nets.flatMap((n) => n.pins.filter((x) => x.ref === p.ref).map((x) => x.n)))
     const ncs = new Set(ncPins.filter((x) => x.ref === p.ref).map((x) => x.n))

@@ -2,8 +2,6 @@
 //   R(10k) ⇄ Device:R · C(10 uF, polarized) ⇄ Device:C_Polarized · NPN("2N3904") ⇄ Transistor_BJT:2N3904
 //   Vsin(amp: 1 V, freq: 1 kHz) ⇄ Simulation_SPICE:VSIN · NE555 ⇄ Timer:NE555P · lib("Lib:Name") for anything else
 import { SENSOR_MODELS, sensorModelFor } from "@/lib/sensors"
-// Arduino modules as schematic parts (Arduino_Modules:…)
-import "@/lib/modules"
 import type { Part, SimFields } from "@/editor/model"
 import { getSymbol, type IndexRow } from "@/lib/kicad"
 import { parseParams, parseValue } from "@/lib/spice"

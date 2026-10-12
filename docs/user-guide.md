@@ -289,22 +289,6 @@ with tests that compile real sketches against the real libraries.
 Limits: modules talk to each other only on the same board. ESP32 boards have no Wi-Fi (QEMU has no radio).
 I²S audio isn't simulated.
 
-### Arduino modules in schematics
-The same modules are schematic parts too: the **Arduino_Modules** library (search "light sensor",
-"MAX31856", "OLED" …; 287 modules). Each has a KiCad-style symbol — supplies on top, ground below, the
-lines a controller drives on the left, the module's outputs on the right, a screen window for displays.
-In Kirk: `U1 = lib("Arduino_Modules:MPU6050")`, pins by name (`U1.SDA -- SDA`).
-- **Modules that talk to a chip** (I²C, SPI, UART, 1-Wire …): wired to an Arduino UNO / Nano / Mega or a Pico in
-  the schematic, they run inside that board's emulator next to its sketch (the same models as the
-  Microcontrollers workspace), while ngspice simulates the rest of the circuit. Their screens, text and
-  LEDs are drawn inside the symbol while it runs.
-- **Analog / digital modules** are sources in SPICE (ratiometric to their supply), LEDs / buzzers / motors /
-  loads are loads, relays switch their contacts — they work in any simulation, with or without a board.
-- **Controls:** select the module — its sliders, **Press (hold)** and **On** are in the inspector, saved with
-  the schematic, and a running simulation follows them.
-- Not yet: modules with ESP32, Renode or Raspberry Pi boards in a schematic (they run there on the
-  Microcontrollers canvas).
-
 Needs `arduino-cli` (`brew install arduino-cli`). The page installs the board cores for you (AVR, RP2040, ESP32). The ESP32 also needs Espressif's QEMU (Settings → Microcontrollers → Install, or ESP-IDF's).
 See [`plan-03.md`](../plan-03.md) for what comes next (Pico, ESP32, Raspberry Pi, breadboard, ngspice check).
 

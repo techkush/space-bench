@@ -41,8 +41,6 @@ export interface CoSimFrame {
   avg: Record<string, number>
   /** what each board printed this frame, by reference */
   serial: Record<string, string>
-  /** what the Arduino modules running with the boards show, by part ref (screens, LEDs, text) */
-  mods: Record<string, import("@/mcu/catalog/look").ModView>
   /** wall-clock ms spent running the chips and in ngspice */
   chipMs: number
   spiceMs: number
@@ -178,7 +176,6 @@ export class CoSim {
     return {
       t0, t1: this.t, window: this.hist.result(), avg, chipMs, spiceMs, netlist: net.text,
       serial: Object.fromEntries(this.boards.map((b, i) => [b.ref, outs[i].serial])),
-      mods: Object.assign({}, ...outs.map((o) => o.mods ?? {})),
     }
   }
 

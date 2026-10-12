@@ -99,9 +99,6 @@ function loadLib(lib: string): Promise<Record<string, RawDef>> {
 }
 
 let indexP: Promise<IndexRow[]> | null = null
-/** generated parts (lib/modules.ts: Arduino modules) add their rows to the index */
-const extraRows: (() => IndexRow[])[] = []
-export function addIndexRows(rows: () => IndexRow[]) { extraRows.push(rows); indexP = null }
 /**
  * Every KiCad symbol (the full database is always kept). Rows carry `sim`: whether the
  * part simulates today; the UI hides the others but they stay available for later
@@ -113,9 +110,9 @@ export function loadIndex(): Promise<IndexRow[]> {
     (loader("sim-index.json") as Promise<Record<string, string[]>>).catch(() => null),
   ]).then(([d, simIndex]) => {
     const simSet = simIndex ? new Set(Object.entries(simIndex).flatMap(([lib, names]) => names.map((n) => `${lib}:${n}`))) : null
-    return [...d.rows.map(([lib, name, desc, keywords, ref, units, power]) => ({
+    return d.rows.map(([lib, name, desc, keywords, ref, units, power]) => ({
       lib, name, desc, keywords, ref, units, power: !!power, sim: simSet ? simSet.has(`${lib}:${name}`) : true,
-    })), ...extraRows.flatMap((f) => f())]
+    }))
   })
   return indexP
 }

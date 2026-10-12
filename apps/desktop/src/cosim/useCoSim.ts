@@ -1,7 +1,6 @@
 // The circuit + firmware run from the workspace: compile each board's sketch, start one chip
 // worker per board, and step the co-simulation in real time (or as fast as ngspice allows).
 import { useCallback, useEffect, useRef, useState } from "react"
-import { boardModules, moduleState } from "./modules"
 import type { Doc, Firmware } from "@/editor/model"
 import { simulate } from "@/lib/engine"
 import type { BoardDef } from "@/mcu/boards"
@@ -53,20 +52,6 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
 
   // values tuned and switches flipped while running take effect from the next frame
   useEffect(() => { sim.current?.setDoc(o.doc) }, [o.doc])
-  // modules running in a chip: their sliders / presses go to it when they change
-  const moduleChips = useRef(new Map<string, ChipLink>())
-  const moduleSent = useRef(new Map<string, string>())
-  useEffect(() => {
-    for (const [ref, chip] of moduleChips.current) {
-      const p = o.doc.parts.find((x) => x.ref === ref)
-      if (!p) continue
-      const st = moduleState(p.sim?.Params, p.lib)
-      const key = JSON.stringify(st)
-      if (moduleSent.current.get(ref) === key) continue
-      moduleSent.current.set(ref, key)
-      chip.ui?.(ref, st)
-    }
-  }, [o.doc])
 
   const compile = useCallback(async (ref: string): Promise<BoardBuild> => {
     const b = boardParts(docRef.current).find((x) => x.part.ref === ref)
@@ -137,20 +122,11 @@ export function useCoSim(o: { doc: Doc; cliBin?: string; frame?: number; onFrame
       if (esp.length > 1) { fail(`Only one ESP32 can run at a time (${esp.map((b) => b.part.ref).join(", ")}).`); return }
       const renode = boards.filter((b) => b.board.chip === "renode")
       if (renode.length > 1) { fail(`Only one Renode board can run at a time (${renode.map((b) => b.part.ref).join(", ")}).`); return }
-      // Arduino modules that talk to a chip run inside its emulator (cosim/modules.ts)
-      const withModules = boardModules(docRef.current)
-      moduleChips.current = new Map()
-      moduleSent.current.clear()
       for (const [i, b] of boards.entries()) {
         if (b.board.chip === "linux") chips.push(await linuxChip(b.board, firmwareOf(docRef.current, b.part.ref, b.board)))
         else if (b.board.chip === "renode") chips.push(await renodeChip(b.board, built[i].firmware as string))
         else if (b.board.chip === "esp32") chips.push(await esp32Chip(b.board, built[i].firmware as string, getSettings().esp32QemuPath))
-        else {
-          const mods = withModules.get(b.part.ref)
-          const chip = typeof Worker === "undefined" ? localChip(b.board, built[i].firmware!, mods) : await workerChip(b.board, built[i].firmware!, mods)
-          chips.push(chip)
-          for (const ref of mods?.modules ?? []) moduleChips.current.set(ref, chip)
-        }
+        else chips.push(typeof Worker === "undefined" ? localChip(b.board, built[i].firmware!) : await workerChip(b.board, built[i].firmware!))
       }
       if (my !== token.current) { chips.forEach((c) => c.dispose()); return }
       let n = 0

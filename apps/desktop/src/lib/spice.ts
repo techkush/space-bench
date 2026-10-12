@@ -16,7 +16,6 @@ import { resolveFeeds, sensorSignal } from "@/lib/feeds"
 import { currentSensitivity, curveTable, QUANTITIES, SENSOR_MODELS, sensorModelFor, type Quantity } from "@/lib/sensors"
 import { pwlSpec, samplePwl, type Signal } from "@/lib/stimulus"
 import { parseSI } from "@/lib/units"
-import { moduleOf, moduleSpice } from "@/lib/modules"
 import { boardOf, isProgrammable, pinRole, PIN_R, PULLDOWN_R, PULLUP_R, SUPPLY_R, type BoardDrive, type Wave } from "@/cosim/boards"
 
 // ---------------------------------------------------------------- values & params
@@ -59,7 +58,7 @@ export function parsePins(text: string | undefined): Record<string, string> {
 
 // ---------------------------------------------------------------- resolution
 
-export type SimKind = "R" | "C" | "L" | "V" | "I" | "D" | "NPN" | "PNP" | "NMOS" | "PMOS" | "NJFET" | "PJFET" | "OPAMP" | "555" | "REG" | "REGADJ" | "SWITCH" | "VSWITCH" | "TEMPSENSOR" | "SENSOR" | "SUBCKT" | "MCU" | "MODULE"
+export type SimKind = "R" | "C" | "L" | "V" | "I" | "D" | "NPN" | "PNP" | "NMOS" | "PMOS" | "NJFET" | "PJFET" | "OPAMP" | "555" | "REG" | "REGADJ" | "SWITCH" | "VSWITCH" | "TEMPSENSOR" | "SENSOR" | "SUBCKT" | "MCU"
 
 export interface ResolvedSim {
   kind: SimKind
@@ -120,8 +119,6 @@ export function resolveSim(part: Part): ResolvedSim | { error: string } | null {
   if (isVirtual(part)) return null
   // Arduino / Pico: the firmware drives the pins (cosim/); a plain run sees the board's supplies
   if (isProgrammable(part)) return { kind: "MCU", pins: {}, params: {}, origin: "inferred", note: "runs its sketch when the circuit and firmware simulate together" }
-  // an Arduino module (lib/modules.ts): a source / load here; the ones that talk to a chip run with its board
-  if (moduleOf(part.lib)) return { kind: "MODULE", pins: {}, params: parseParams(part.sim?.Params), origin: "inferred", note: "an Arduino module: it runs with the board it is wired to" }
   // the power unit of a multi-unit IC (e.g. LM358 unit C: V+/V−) only connects pins; the other units' models use them
   const u = sym.units[part.unit - 1]
   if (sym.units.length > 1 && u && u.pins.length && u.pins.every((p) => p.t === "power_in" || p.t === "power_out")) return null
@@ -658,12 +655,6 @@ export function buildNetlist(doc: Doc, nl: Netlist, analysis: AnalysisKind, opts
         if (part.lib.startsWith("kirk:")) { issues.push({ severity: "warning", message: `${ref}: compiling component ${part.value} for these parameters…`, ref: part.ref }); continue }
         issues.push({ severity: "warning", message: `${ref} not simulated: subcircuit ${sim.model ?? "?"} needs a model library (coming with model import)`, ref: part.ref })
         continue
-      }
-      case "MODULE": {
-        const mod = moduleOf(part.lib)!
-        const numOf = Object.fromEntries(Object.entries(mod.pinName).map(([n, name]) => [name, n]))
-        lines.push(...moduleSpice(mod, part.ref, part.sim?.Params, (pin) => { const n = numOf[pin] !== undefined ? net(numOf[pin]) : undefined; return n === undefined ? `nc_${++dangling}` : node(n) }))
-        break
       }
       case "MCU": {
         if (done.has(part.ref)) break
