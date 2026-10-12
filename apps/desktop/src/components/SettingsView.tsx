@@ -1,4 +1,4 @@
-// Settings (Figma page 10): a nav of sections on the left, cards of rows on the right.
+// Settings: a nav of sections on the left, cards of rows on the right.
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import { ArrowLeft, Check, Command, Sparkles, File, Gauge, Info, Layers, Loader2, Microchip, RotateCcw, Settings as SettingsIcon, Sun, Zap } from "lucide-react"
@@ -587,18 +587,28 @@ function Shortcuts() {
 }
 
 const LICENSES: [string, string, string][] = [
-  ["ngspice", "Modified BSD (3-clause) license", "The circuit simulator; runs as a separate program."],
-  ["KiCad symbol libraries", "CC-BY-SA 4.0 with the KiCad library exception", "Schematic symbols, pin maps and Sim.* fields."],
+  ["KiCad symbol libraries", "CC-BY-SA 4.0 with the KiCad library exception", "Schematic symbols, pin maps and Sim.* fields — converted to JSON/SVG by scripts/build-kicad-symbols.mjs; not covered by Space Bench's MIT licence."],
   ["Generic op-amp model", "Public domain (Holger Vogt, KiCad Simulation_SPICE)", "kicad_builtin_opamp single-pole model."],
+  ["avr8js", "MIT · Uri Shaked / Wokwi", "AVR (Arduino Uno, Nano, Mega, ATtiny85) emulation."],
+  ["rp2040js", "MIT · Uri Shaked / Wokwi", "RP2040 (Raspberry Pi Pico) emulation."],
+  ["RP2040 B1 boot ROM", "BSD-3-Clause · Copyright (c) 2020 Raspberry Pi (Trading) Ltd.", "Boots Pico firmware (via rp2040js)."],
+  ["@wokwi/elements", "MIT · Wokwi", "Board and part drawings in the Microcontrollers workspace."],
+  ["Monaco Editor", "MIT · Microsoft", "Sketch editor."],
+  ["CodeMirror", "MIT", "Kirk code editor."],
+  ["three.js", "MIT", "3D board view."],
+  ["fflate", "MIT", "Compressed files."],
   ["Tauri", "MIT / Apache-2.0", "Desktop shell."],
   ["React", "MIT", "User interface."],
   ["Radix UI · shadcn/ui", "MIT", "Interface components."],
   ["Tailwind CSS", "MIT", "Styling."],
-  ["CodeMirror", "MIT", "Kirk code editor."],
   ["uPlot", "MIT", "Charts."],
   ["Sonner", "MIT", "Notifications."],
   ["Lucide icons", "ISC license", "Icons."],
   ["Geist & Geist Mono", "SIL Open Font License 1.1", "Typefaces."],
+  ["ngspice", "Modified BSD (3-clause) license", "The circuit simulator; installed separately, runs as a program or shared library."],
+  ["arduino-cli", "GPL-3.0 (separate program, not bundled)", "Compiles sketches."],
+  ["QEMU · Espressif QEMU", "GPL-2.0 (separate programs, not bundled)", "Raspberry Pi VM · ESP32 emulation."],
+  ["Renode", "MIT (separate program, not bundled)", "STM32 / nRF52 emulation."],
 ]
 
 function About() {
@@ -614,6 +624,7 @@ function About() {
         <Row label="Circuit design, simulation and measurement" hint="Draw a schematic or write Kirk code — both stay in sync."><span /></Row>
         <Row label="Simulator"><span className="font-mono text-sm">{engine ?? "ngspice not found"}</span></Row>
         <Row label="Platform"><span className="font-mono text-sm">{isTauri() ? "Desktop app" : "Browser (dev)"} · {navigator.platform}</span></Row>
+        <Row label="Licence" hint="Free and open source — github.com/techkush/spacebench"><span className="text-sm">MIT</span></Row>
       </Card>
       <Card title="Third-party components & licenses">
         <div className="divide-y">

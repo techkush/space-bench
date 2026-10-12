@@ -1,4 +1,4 @@
-// Start screen (Figma page 08): new / import / open, recent projects with previews,
+// Start screen: new / import / open, recent projects with previews,
 // examples, Learn Kirk, the part library and the model database.
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {

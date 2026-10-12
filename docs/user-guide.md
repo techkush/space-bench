@@ -290,7 +290,6 @@ Limits: modules talk to each other only on the same board. ESP32 boards have no 
 I²S audio isn't simulated.
 
 Needs `arduino-cli` (`brew install arduino-cli`). The page installs the board cores for you (AVR, RP2040, ESP32). The ESP32 also needs Espressif's QEMU (Settings → Microcontrollers → Install, or ESP-IDF's).
-See [`plan-03.md`](../plan-03.md) for what comes next (Pico, ESP32, Raspberry Pi, breadboard, ngspice check).
 
 ## AI assistant
 **AI** (title bar, the Kirk panel, or ⌘J in the desktop app) opens a chat beside the Kirk editor. Describe a circuit, ask for a

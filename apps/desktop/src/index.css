@@ -7,7 +7,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Tokens mirror the Figma "Theme" variable collection (00 · Design System). */
+/* Theme tokens (light and dark). */
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;

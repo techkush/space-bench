@@ -1,9 +1,8 @@
 # Kirk — a circuit programming language for Space Bench
 
-**Status:** v0.1 — phases 1–5 implemented in `spicebench-app/apps/desktop/src/kirk/` (lexer, parser, compiler, generator, measurements); see §17
+**Status:** v0.1 — implemented in `apps/desktop/src/kirk/`; §17 lists what is done and what isn't yet
 **Name:** Kirk (after Gustav Kirchhoff, whose current and voltage laws every circuit obeys) · file extension **`.kirk`** · command-line tool **`kirk`**
-**Audience:** the Space Bench desktop-app team (compiler, editor, schematic and simulation engineers)
-**Companion doc:** [`engine-spec.md`](engine-spec.md) — the Space Bench Engine that runs compiled Kirk circuits
+**Audience:** Space Bench users who write circuits as code, and contributors to the compiler and editor
 
 ---
 
@@ -38,7 +37,7 @@ The desktop app keeps **code and schematic in sync both ways**:
 
 ## 2. A first example
 
-The 555 LED blinker from the Figma designs, written in Kirk:
+The 555 LED blinker, written in Kirk:
 
 ```kirk
 // 555 astable blinker — f = 1.44 / ((R1 + 2·R2)·C1) ≈ 6.86 Hz
@@ -80,7 +79,7 @@ scope Scope1 {
 ```
 
 What the app does with this file:
-- **Schematic:** draws exactly the circuit in the Figma "01 · Workspace" screen (auto-layout on first open, then positions are remembered).
+- **Schematic:** draws the circuit (auto-layout on first open, then positions are remembered).
 - **Probes:** puts CH1/CH2 probe pins on nets `OUT` and `TRIG`, connected to the scope in the instrument dock.
 - **Simulation:** runs the transient and computes `freq`/`duty` (6.86 Hz, 52.4 %); the `assert` turns green.
 
@@ -303,7 +302,7 @@ component OpAmpIdeal(gain: Ratio = 100k, gbw: Frequency = 1 MHz, vsat: Voltage =
     }
 }
 ```
-`behavior` compiles to engine behavioural sources (their Jacobian comes from automatic differentiation, see engine-spec §6), controlled sources and passives, wrapped as a subcircuit.
+`behavior` compiles to engine behavioural sources (their Jacobian comes from automatic differentiation), controlled sources and passives, wrapped as a subcircuit.
 
 ### 6.4 Measurement as a component
 Instruments are components too (§7), so users can define their own:
@@ -356,7 +355,7 @@ meter   DMM1 = rms(V(OUT))                 // shows 0.2500 V at fc for the RC ex
 bode    Bode1 in VIN out OUT from 10 Hz to 100 kHz
 ```
 
-Instrument statements carry no layout. The schematic draws their **leads** (dashed, colour-coded) from the instrument badge to the probed nets, as in the Figma "05 · Instruments" screen. Deleting a lead in the schematic deletes the matching line of code, and vice versa.
+Instrument statements carry no layout. The schematic draws their **leads** (dashed, colour-coded) from the instrument badge to the probed nets. Deleting a lead in the schematic deletes the matching line of code, and vice versa.
 
 ---
 
@@ -472,7 +471,7 @@ layout {
 
 ## 10. Running on the Space Bench Engine
 
-There is no external simulator and no netlist file in the normal flow. The compiler hands the **circuit IR** straight to the Space Bench Engine ([`engine-spec.md`](engine-spec.md)) as one or more **jobs**:
+There is no external simulator and no netlist file in the normal flow. The compiler hands the **circuit IR** straight to the Space Bench Engine (the engine design notes) as one or more **jobs**:
 
 ```text
 job #1  Blinker555 · tran(stop 500 ms, step 20 µs)
@@ -485,8 +484,8 @@ job #1  Blinker555 · tran(stop 500 ms, step 20 µs)
 
 Rules:
 - **Elaboration:** sub-components and `behavior` blocks are flattened into engine devices. `U1.CONT -- nc` leaves that node internal to the macro-model.
-- **Sweeps, Monte Carlo, temperature:** these map to the engine's **driver** loops (engine-spec §5.6), which run in parallel threads and reuse the matrix ordering. No scripting language is involved.
-- **Measurements and asserts:** run in the engine's measurement library on the accepted solution points (engine-spec §7).
+- **Sweeps, Monte Carlo, temperature:** these map to the engine's **driver** loops , which run in parallel threads and reuse the matrix ordering. No scripting language is involved.
+- **Measurements and asserts:** run in the engine's measurement library on the accepted solution points .
 - **Source mapping:** every engine device and unknown keeps its Kirk source span. So "singular matrix at node TRIG" highlights both the Kirk line and the schematic part ("Show on schematic").
 - **Interoperability (optional, later):** `kirk export --format spice` writes a SPICE-format netlist for people who want to cross-check in other tools. It is never needed to run Space Bench.
 
@@ -572,7 +571,7 @@ packages/
   kirk-syntax/      grammar (Lezer for CodeMirror + tree-sitter), lossless CST, formatter
   kirk-compiler/    semantic analysis, units, ERC, IR, edit ops, code patcher
   kirk-engine-bridge/  IR → Space Bench Engine jobs, source maps, sweep/MC drivers
-engine/             Space Bench Engine (Rust core, see engine-spec.md)
+engine/             Space Bench Engine (experimental Rust core)
   kirk-layout/      auto-placement + orthogonal router
   kirk-lsp/         language server
   kirk-stdlib/      *.kirk standard library + model DB index
@@ -580,37 +579,6 @@ apps/desktop/       Space Bench (shadcn/ui), uses all of the above
 examples/           blinker.kirk, rc_lowpass.kirk, ... (golden tests)
 ```
 **Recommended implementation language: TypeScript.** It is the same language as the shadcn/ui desktop front-end, so the compiler runs in the UI process with no bridge. The grammar is written for Lezer (CodeMirror's native incremental parser), and a tree-sitter grammar is generated for other editors. A Rust/WASM compiler core can come later if profiling shows the need.
-
----
-
-## 15. Development plan — part by part
-
-Each phase ends with something demoable and has its own acceptance tests.
-
-| # | Phase | Deliverables | Done when |
-|---|---|---|---|
-| 0 | **Decisions** | Final name and extension; desktop shell (Tauri vs Electron); repo skeleton per §14.3 | Team sign-off on §16 |
-| 1 | **Syntax** | Grammar, lossless CST, error recovery, highlighting, `kirk fmt` | All §2/§5 snippets parse; `fmt` is idempotent on every example; a round-trip test (parse → print) is byte-identical |
-| 2 | **Semantics & units** | Symbol table, unit system, nets/chains, ERC, diagnostics V0–V3xx | `C(10k)` gives V102 with the right span; the 555 example produces the expected net list |
-| 3 | **Engine bridge + run** | IR → Space Bench Engine (engine phases E0–E4), model resolution, source maps, `simulate`, `measure`, `assert` | `blinker.kirk` runs and gives freq 6.86 Hz ±2 % and duty 52.4 %; an engine diagnostic links back to its Kirk line |
-| 4 | **Code → schematic** | IR diff, auto-placement, orthogonal router, Space Bench symbol rendering, `layout` block | Opening `blinker.kirk` draws a readable schematic with no overlaps; editing a value updates the canvas within one frame |
-| 5 | **Schematic → code** | Edit ops (§14.2), CST patcher, unified undo, rename refactor | Every gesture in §9.2 produces the expected text diff (golden tests); comments survive 100 random edit sequences (property test) |
-| 6 | **Instruments & data** | `scope meter funcgen bode logger spectrum`, leads on canvas, dock panels, CSV/Parquet export | The RC-filter example shows DMM = 0.2500 V at 995 Hz and the Bode fc = 995 Hz |
-| 7 | **Sweeps & statistics** | `sweep`, `montecarlo`, `temp`, parallel runs, histograms, yield | The R2 sweep reproduces the four frequencies in the Figma Analysis screen; MC yield is within ±1 % of the analytic value |
-| 8 | **Components & library** | `component` (engine model / subcircuit / behavior / instrument), symbol drawing (§6.5), library packaging | `OpAmpIdeal` and `RCLowPass` from §6 work in both views; user components show up in the part browser |
-| 9 | **Language server & polish** | Completion, hover with live values, quick fixes, docs site, example gallery | A new user can build the 555 blinker from code alone with completions only |
-| 10 | **Interop & CLI** | JSON IR API, optional SPICE-format netlist import/export, CLI `kirk build/run/fmt` | The 555 survives JSON IR round trip with identical connectivity |
-
----
-
-## 16. Open questions
-1. **Name and extension.** Decided: **Kirk**, `.kirk`. No existing programming language or file type uses them (checked 2026-10-10); run a formal trademark check before public release.
-2. **Chain operator.** `--` (current proposal) vs `->` (suggests direction) vs `~`.
-3. **Desktop shell.** Tauri (small; the Rust side hosts the Space Bench Engine directly) vs Electron (engine as a native module).
-4. **Measurement placement.** Decided: all measurements run in the engine's measurement library (engine-spec §7).
-5. **Real-time mode.** Decided: the same Space Bench Engine in fixed-step real-time mode (engine-spec §5.7).
-6. **Units default for bare numbers** in user components without a typed parameter: error or `Ratio`?
-7. **Layout storage.** In-file `layout` block (current proposal) vs a sidecar `.kirk.layout` file.
 
 ---
 

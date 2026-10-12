@@ -1,7 +1,7 @@
 // Everything a circuit's sensors can sense (the room's properties), and the analog sensors
 // that turn them into a resistance or a voltage. Data-driven: each sensor is a response curve
 // (sampled to a pwl() table for ngspice) plus how it connects. Digital (I²C / SPI) sensors need
-// a microcontroller and come with the AVR step (plan-02 3.2).
+// a microcontroller (the AVR step).
 import type { KPin, SymbolDef } from "./kicad"
 import { registerBuiltin } from "./kicad"
 

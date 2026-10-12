@@ -1,4 +1,4 @@
-// PCB editor (Figma page 09): layers, footprints placed from the schematic, ratsnest,
+// PCB editor: layers, footprints placed from the schematic, ratsnest,
 // two-layer routing with vias (manual or auto-router), live DRC, Gerber + drill export.
 import { useEffect, useMemo, useRef, useState } from "react"
 import {

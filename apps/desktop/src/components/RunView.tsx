@@ -1,4 +1,4 @@
-// Simulation process view (Figma page 06): how a run turns the schematic into data —
+// Simulation process view: how a run turns the schematic into data —
 // pipeline stages with timings, a timeline of every run, the solver console, and run
 // states (progress, complete, recovered, failed) that link back to the parts involved.
 import { useEffect, useMemo, useRef, useState } from "react"

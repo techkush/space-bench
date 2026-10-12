@@ -102,7 +102,7 @@ async function simulateOnce(net: SpiceNetlist, o: SimOptions = {}): Promise<JobR
     return remap((await res.json()) as JobResult, net)
   }
   if (!isTauri()) {
-    throw new EngineError("Simulation runs in the desktop app (ngspice). Start it with `pnpm dev` from spicebench-app.")
+    throw new EngineError("Simulation runs in the desktop app (ngspice). Start it with `pnpm dev` from the repository root.")
   }
   const run = o.run ?? `r${++seq}`
   const kind = engineOpts.engine ?? "auto"
